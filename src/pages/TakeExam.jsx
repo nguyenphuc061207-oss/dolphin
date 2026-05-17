@@ -277,6 +277,7 @@ export default function TakeExam() {
         cheatCount, examSnapshot: exam.questions,
         mathDictionary: exam.mathDictionary || {},
         submittedAt: serverTimestamp(),
+        attemptNumber: submissionCount + 1,
       });
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
       alert(`Nộp bài thành công!\nĐiểm: ${score}/10 (${correct}/${gradable} câu đúng)`);

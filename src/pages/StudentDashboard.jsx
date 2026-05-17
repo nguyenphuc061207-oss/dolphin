@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { db } from "../firebase";
-import { collection, query, where, getDocs, doc, getDoc, deleteDoc } from "firebase/firestore";
+import { collection, query, where, getDocs, doc, getDoc, updateDoc } from "firebase/firestore";
 import { useAuth } from "../contexts/AuthContext";
 import { Link, useNavigate } from "react-router-dom";
 import { RefreshCw, Trash2 } from "lucide-react";
@@ -26,21 +26,44 @@ export default function StudentDashboard() {
           where("studentId", "==", currentUser.uid)
         );
         const querySnapshot = await getDocs(q);
-        const subs = [];
+        const allSubs = [];
         querySnapshot.forEach((doc) => {
-          subs.push({ id: doc.id, ...doc.data() });
+          allSubs.push({ id: doc.id, ...doc.data() });
         });
 
-        // Sort newest first
-        subs.sort((a, b) => {
+        // Sắp xếp theo thứ tự thời gian tăng dần để tính toán số lần thực hiện chính xác
+        allSubs.sort((a, b) => {
+          const timeA = a.submittedAt ? a.submittedAt.toMillis() : 0;
+          const timeB = b.submittedAt ? b.submittedAt.toMillis() : 0;
+          return timeA - timeB;
+        });
+
+        // Tính toán lần thực hiện cho từng đề thi
+        const examCounters = {};
+        const processedSubs = allSubs.map((sub) => {
+          if (!examCounters[sub.examId]) {
+            examCounters[sub.examId] = 0;
+          }
+          examCounters[sub.examId]++;
+          return {
+            ...sub,
+            computedAttemptNumber: sub.attemptNumber || examCounters[sub.examId]
+          };
+        });
+
+        // Sắp xếp lại theo thời gian giảm dần (mới nhất lên đầu) để hiển thị
+        processedSubs.sort((a, b) => {
           const timeA = a.submittedAt ? a.submittedAt.toMillis() : 0;
           const timeB = b.submittedAt ? b.submittedAt.toMillis() : 0;
           return timeB - timeA;
         });
-        setSubmissions(subs);
+
+        // Lọc bỏ những bài làm đã bị học sinh xóa (ẩn đi đối với học sinh)
+        const visibleSubs = processedSubs.filter(sub => !sub.deletedByStudent);
+        setSubmissions(visibleSubs);
 
         // 2. Fetch attempt limits for unique exams
-        const uniqueExamIds = [...new Set(subs.map((s) => s.examId))];
+        const uniqueExamIds = [...new Set(visibleSubs.map((s) => s.examId))];
         const limits = {};
         for (const examId of uniqueExamIds) {
           const examRef = doc(db, "exams", examId);
@@ -63,7 +86,7 @@ export default function StudentDashboard() {
   const handleDeleteSubmission = async (id) => {
     if (window.confirm("Bạn có chắc chắn muốn xóa lịch sử làm bài này? Hành động này không thể hoàn tác.")) {
       try {
-        await deleteDoc(doc(db, "submissions", id));
+        await updateDoc(doc(db, "submissions", id), { deletedByStudent: true });
         // Cập nhật lại state cục bộ thay vì fetch lại toàn bộ
         setSubmissions(prev => prev.filter(s => s.id !== id));
       } catch (error) {
@@ -122,9 +145,9 @@ export default function StudentDashboard() {
                     <tr key={sub.id} className="hover:bg-blue-50/30 transition-colors group">
                       <td className="p-5">
                         <p className="font-bold text-gray-900 group-hover:text-blue-600 transition-colors">{sub.examTitle}</p>
-                        <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mt-0.5">Lần thực hiện {
-                          submissions.filter(s => s.examId === sub.examId && (s.submittedAt?.toMillis() || 0) <= (sub.submittedAt?.toMillis() || 0)).length
-                        }</p>
+                        <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mt-0.5">
+                          Lần thực hiện {sub.computedAttemptNumber}
+                        </p>
                       </td>
                       <td className="p-5 text-center">
                         <span className={`inline-flex items-center justify-center px-4 py-1 rounded-full text-sm font-black ${

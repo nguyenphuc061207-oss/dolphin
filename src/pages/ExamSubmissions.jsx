@@ -1,14 +1,33 @@
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { db } from "../firebase";
-import { collection, query, where, getDocs, deleteDoc, doc } from "firebase/firestore";
+import { collection, query, where, getDocs, deleteDoc, doc, getDoc } from "firebase/firestore";
 import { Trash2 } from "lucide-react";
+
+const getAttemptNumber = (sub, allSubs) => {
+    if (sub.attemptNumber !== undefined) return sub.attemptNumber;
+    
+    const getMillis = (ts) => {
+        if (!ts) return 0;
+        if (typeof ts.toMillis === "function") return ts.toMillis();
+        if (typeof ts.toDate === "function") return ts.toDate().getTime();
+        return new Date(ts).getTime();
+    };
+
+    const studentSubs = allSubs
+        .filter(s => (s.studentId && s.studentId === sub.studentId) || s.studentName === sub.studentName)
+        .sort((a, b) => getMillis(a.submittedAt) - getMillis(b.submittedAt));
+        
+    const index = studentSubs.findIndex(s => s.id === sub.id);
+    return index !== -1 ? index + 1 : 1;
+};
 
 export default function ExamSubmissions() {
     const { examId } = useParams();
     const [submissions, setSubmissions] = useState([]);
     const [loading, setLoading] = useState(true);
     const [examTitle, setExamTitle] = useState("");
+    const [exam, setExam] = useState(null);
 
     useEffect(() => {
         fetchSubmissions();
@@ -16,6 +35,14 @@ export default function ExamSubmissions() {
 
     const fetchSubmissions = async () => {
         try {
+            // Fetch cấu hình đề thi để kiểm tra tính năng giám sát
+            const examSnap = await getDoc(doc(db, "exams", examId));
+            if (examSnap.exists()) {
+                const examData = examSnap.data();
+                setExam(examData);
+                setExamTitle(examData.title);
+            }
+
             const q = query(
                 collection(db, "submissions"),
                 where("examId", "==", examId)
@@ -27,7 +54,7 @@ export default function ExamSubmissions() {
                 subs.push({ id: doc.id, ...doc.data() });
             });
 
-            if (subs.length > 0) {
+            if (subs.length > 0 && !examTitle) {
                 setExamTitle(subs[0].examTitle);
             }
 
@@ -58,22 +85,32 @@ export default function ExamSubmissions() {
         if (submissions.length === 0) return alert("Không có dữ liệu để xuất!");
 
         // 1. Định nghĩa tiêu đề các cột (Header)
-        const headers = ["Hang", "Ten Hoc Sinh", "Diem So", "So Cau Dung", "Tong So Cau", "Giam Sat", "Thoi Gian Nop"];
+        const headers = ["Hang", "Ten Hoc Sinh", "Lan Thi", "Diem So", "So Cau Dung", "Tong So Cau"];
+        if (exam?.isAntiCheat) {
+            headers.push("Giam Sat");
+        }
+        headers.push("Thoi Gian Nop");
 
         // 2. Chuyển đổi mảng dữ liệu thành các dòng văn bản CSV
         const rows = submissions.map((sub, index) => {
             const time = sub.submittedAt ? new Date(sub.submittedAt.toDate()).toLocaleString("vi-VN") : "Khong xac dinh";
-            const status = sub.cheatCount > 0 ? `Vi pham thoát tab ${sub.cheatCount} lan` : "Hop le";
-
-            return [
+            
+            const rowData = [
                 index + 1,
                 `"${sub.studentName}"`, // Bọc trong dấu ngoặc kép để tránh lỗi nếu tên có dấu phẩy
+                getAttemptNumber(sub, submissions),
                 sub.score,
                 sub.correctCount,
-                sub.totalQuestions,
-                `"${status}"`,
-                `"${time}"`
+                sub.totalQuestions
             ];
+
+            if (exam?.isAntiCheat) {
+                const status = sub.cheatCount > 0 ? `Vi pham thoat tab ${sub.cheatCount} lan` : "Hop le";
+                rowData.push(`"${status}"`);
+            }
+
+            rowData.push(`"${time}"`);
+            return rowData;
         });
 
         // 3. Gộp Header và Rows lại với nhau bằng dấu phẩy và dấu xuống dòng
@@ -136,9 +173,10 @@ export default function ExamSubmissions() {
                             <tr className="bg-blue-50 text-blue-800 border-b-2 border-blue-200">
                                 <th className="p-4 font-bold">Hạng</th>
                                 <th className="p-4 font-bold">Tên học sinh</th>
+                                <th className="p-4 font-bold">Lần thi</th>
                                 <th className="p-4 font-bold">Điểm số</th>
                                 <th className="p-4 font-bold">Câu đúng</th>
-                                <th className="p-4 font-bold">Giám sát</th>
+                                {exam?.isAntiCheat && <th className="p-4 font-bold">Giám sát</th>}
                                 <th className="p-4 font-bold">Thời gian nộp</th>
                                 <th className="p-4 font-bold text-right">Thao tác</th>
                             </tr>
@@ -148,6 +186,9 @@ export default function ExamSubmissions() {
                                 <tr key={sub.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
                                     <td className="p-4 font-bold text-gray-500">#{index + 1}</td>
                                     <td className="p-4 font-semibold text-gray-800">{sub.studentName}</td>
+                                    <td className="p-4 text-gray-600 font-medium">
+                                        Lần {getAttemptNumber(sub, submissions)}
+                                    </td>
                                     <td className="p-4">
                                         <span className="px-3 py-1 bg-green-100 text-green-700 font-bold rounded-full">
                                             {sub.score} / 10
@@ -156,17 +197,19 @@ export default function ExamSubmissions() {
                                     <td className="p-4 text-gray-600 font-medium">
                                         {sub.correctCount} / {sub.totalQuestions}
                                     </td>
-                                    <td className="p-4">
-                                        {sub.cheatCount > 0 ? (
-                                            <span className="px-2 py-1 bg-red-100 text-red-700 font-semibold rounded text-sm whitespace-nowrap">
-                                                ⚠️ Thoát tab {sub.cheatCount} lần
-                                            </span>
-                                        ) : (
-                                            <span className="px-2 py-1 bg-green-100 text-green-700 font-semibold rounded text-sm">
-                                                ✅ Hợp lệ
-                                            </span>
-                                        )}
-                                    </td>
+                                    {exam?.isAntiCheat && (
+                                        <td className="p-4">
+                                            {sub.cheatCount > 0 ? (
+                                                <span className="px-2 py-1 bg-red-100 text-red-700 font-semibold rounded text-sm whitespace-nowrap">
+                                                    ⚠️ Thoát tab {sub.cheatCount} lần
+                                                </span>
+                                            ) : (
+                                                <span className="px-2 py-1 bg-green-100 text-green-700 font-semibold rounded text-sm">
+                                                    ✅ Hợp lệ
+                                                </span>
+                                            )}
+                                        </td>
+                                    )}
                                     <td className="p-4 text-sm text-gray-500">
                                         {sub.submittedAt ? new Date(sub.submittedAt.toDate()).toLocaleString("vi-VN") : "Không xác định"}
                                     </td>
