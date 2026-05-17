@@ -6,10 +6,11 @@ import { RefreshCw, AlertTriangle, CheckCircle2, XCircle, PenLine } from "lucide
 import RichTextRenderer from "../components/RichTextRenderer";
 
 const TYPE_LABELS = {
-    single:     { label: 'Trắc nghiệm', color: 'bg-blue-100 text-blue-700' },
-    multiple:   { label: 'Chọn nhiều',  color: 'bg-purple-100 text-purple-700' },
-    true_false: { label: 'Đúng/Sai',   color: 'bg-amber-100 text-amber-700' },
-    essay:      { label: 'Tự luận',    color: 'bg-emerald-100 text-emerald-700' },
+    single:           { label: 'Trắc nghiệm', color: 'bg-blue-100 text-blue-700' },
+    multiple:         { label: 'Chọn nhiều',  color: 'bg-purple-100 text-purple-700' },
+    true_false:       { label: 'Đúng/Sai',   color: 'bg-amber-100 text-amber-700' },
+    multi_true_false: { label: 'Đúng/Sai Nhiều Ý', color: 'bg-orange-100 text-orange-700' },
+    essay:            { label: 'Tự luận',    color: 'bg-emerald-100 text-emerald-700' },
 };
 
 /** Check correctness for any question type */
@@ -21,7 +22,25 @@ function checkCorrect(q, studentAns) {
         const sa = Array.isArray(studentAns) ? [...studentAns].sort().join(',') : '';
         return ca === sa && ca !== '';
     }
+    if (type === 'multi_true_false') {
+        if (!Array.isArray(studentAns)) return false;
+        let correctStmts = 0;
+        for (let j = 0; j < q.options.length; j++) {
+            if (studentAns[j] === q.correctAnswer[j]) correctStmts++;
+        }
+        return correctStmts > 0;
+    }
     return studentAns === q.correctAnswer;
+}
+
+/** Helper to determine if all options are short for grid rendering */
+function isShortOptions(options) {
+    if (!options || options.length === 0) return false;
+    return options.every(opt => {
+        if (!opt) return true;
+        const cleanText = opt.replace(/<[^>]+>/g, '').replace(/\$[^\$]+\$/g, '');
+        return cleanText.trim().length < 25;
+    });
 }
 
 export default function ReviewExam() {
@@ -225,49 +244,119 @@ export default function ReviewExam() {
                                         </div>
                                     )}
 
-                                    {/* ── SINGLE / MULTIPLE / TRUE-FALSE: options grid ── */}
+                                    {/* ── MULTI-TRUE-FALSE: scoring method info ── */}
+                                    {qType === 'multi_true_false' && (
+                                        <div className="flex items-center gap-2 p-3 bg-orange-50 rounded-xl border border-orange-100 mb-4 mt-2">
+                                            <AlertTriangle className="w-4 h-4 text-orange-500 shrink-0" />
+                                            <span className="text-xs font-bold text-orange-800 uppercase flex-1">
+                                                Cấu hình chấm điểm: {question.scoringMethod === 'gdpt_2018' ? 'GDPT 2018' : 'Chia đều'}
+                                            </span>
+                                            {question.scoringMethod === 'gdpt_2018' && (
+                                                <span className="text-[10px] text-orange-600 bg-orange-100 px-2 py-0.5 rounded-md font-bold" title="1 ý: 0.1đ | 2 ý: 0.25đ | 3 ý: 0.5đ | 4 ý: 1.0đ">
+                                                    (Quy chuẩn 0.1 - 0.25 - 0.5 - 1.0)
+                                                </span>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* ── SINGLE / MULTIPLE / TRUE-FALSE / MULTI-TRUE-FALSE: options grid ── */}
                                     {!isEssay && (
-                                        <div className="grid grid-cols-1 gap-3">
+                                        <div className={`grid gap-3 ${isShortOptions(question.options) ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"}`}>
                                             {question.options.map((option, oIndex) => {
-                                                const isAnswered = isMulti
-                                                    ? Array.isArray(studentChoice) && studentChoice.includes(oIndex)
-                                                    : oIndex === studentChoice;
-                                                const isCorrectOpt = isMulti
-                                                    ? Array.isArray(question.correctAnswer) && question.correctAnswer.includes(oIndex)
-                                                    : oIndex === question.correctAnswer;
+                                                const isMultiTF = qType === 'multi_true_false';
+                                                
+                                                let isAnswered = false;
+                                                let isCorrectOpt = false;
+
+                                                if (isMultiTF) {
+                                                    const stuAns = Array.isArray(studentChoice) ? studentChoice[oIndex] : null;
+                                                    const corAns = question.correctAnswer[oIndex];
+                                                    isAnswered = stuAns !== null && stuAns !== undefined;
+                                                    isCorrectOpt = stuAns === corAns;
+                                                } else {
+                                                    isAnswered = isMulti
+                                                        ? Array.isArray(studentChoice) && studentChoice.includes(oIndex)
+                                                        : oIndex === studentChoice;
+                                                    isCorrectOpt = isMulti
+                                                        ? Array.isArray(question.correctAnswer) && question.correctAnswer.includes(oIndex)
+                                                        : oIndex === question.correctAnswer;
+                                                }
 
                                                 let cardClass = "bg-gray-50 border-gray-100 text-gray-600";
                                                 let circleClass = "border-gray-300 text-gray-400 bg-white";
 
-                                                if (isCorrectOpt) {
-                                                    cardClass = "bg-emerald-50 border-emerald-500 text-emerald-900 font-bold ring-1 ring-emerald-500 shadow-sm shadow-emerald-100";
-                                                    circleClass = "bg-emerald-500 border-emerald-500 text-white";
-                                                } else if (isAnswered) {
-                                                    cardClass = "bg-red-50 border-red-500 text-red-900 font-bold ring-1 ring-red-500 shadow-sm shadow-red-100";
-                                                    circleClass = "bg-red-500 border-red-500 text-white";
+                                                if (isMultiTF) {
+                                                    if (isAnswered && isCorrectOpt) {
+                                                        cardClass = "bg-emerald-50 border-emerald-500 text-emerald-900 font-bold ring-1 ring-emerald-500 shadow-sm shadow-emerald-100";
+                                                        circleClass = "bg-emerald-500 border-emerald-500 text-white";
+                                                    } else if (isAnswered && !isCorrectOpt) {
+                                                        cardClass = "bg-red-50 border-red-500 text-red-900 font-bold ring-1 ring-red-500 shadow-sm shadow-red-100";
+                                                        circleClass = "bg-red-500 border-red-500 text-white";
+                                                    } else {
+                                                        cardClass = "bg-orange-50 border-orange-200 text-orange-900";
+                                                        circleClass = "bg-orange-100 border-orange-200 text-orange-700";
+                                                    }
+                                                } else {
+                                                    if (isCorrectOpt) {
+                                                        cardClass = "bg-emerald-50 border-emerald-500 text-emerald-900 font-bold ring-1 ring-emerald-500 shadow-sm shadow-emerald-100";
+                                                        circleClass = "bg-emerald-500 border-emerald-500 text-white";
+                                                    } else if (isAnswered) {
+                                                        cardClass = "bg-red-50 border-red-500 text-red-900 font-bold ring-1 ring-red-500 shadow-sm shadow-red-100";
+                                                        circleClass = "bg-red-500 border-red-500 text-white";
+                                                    }
                                                 }
 
                                                 return (
                                                     <div key={oIndex} className={`flex items-center gap-4 p-4 rounded-2xl border transition-all ${cardClass}`}>
-                                                        <div className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-${isMulti ? 'md' : 'full'} border text-xs font-black transition-colors ${circleClass}`}>
-                                                            {String.fromCharCode(65 + oIndex)}
-                                                        </div>
+                                                        {isMultiTF ? (
+                                                            <div className="shrink-0 flex items-center gap-2">
+                                                                <span className="text-xs font-black mr-1 uppercase">Ý {oIndex + 1}</span>
+                                                                <div className={`px-2 py-1 rounded text-[10px] font-bold border ${circleClass}`}>
+                                                                    {Array.isArray(studentChoice) && studentChoice[oIndex] !== undefined && studentChoice[oIndex] !== null 
+                                                                        ? (studentChoice[oIndex] ? 'ĐÚNG' : 'SAI')
+                                                                        : 'CHƯA CHỌN'
+                                                                    }
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <div className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-${isMulti ? 'md' : 'full'} border text-xs font-black transition-colors ${circleClass}`}>
+                                                                {String.fromCharCode(65 + oIndex)}
+                                                            </div>
+                                                        )}
                                                         <div className="text-sm font-medium flex-1">
                                                             <RichTextRenderer content={option} mathDict={submission.mathDictionary} />
                                                         </div>
-                                                        {isCorrectOpt && isAnswered && (
+                                                        {(!isMultiTF && isCorrectOpt && isAnswered) && (
                                                             <span className="ml-auto flex items-center gap-1 text-emerald-600 text-[9px] font-black uppercase tracking-tighter">
                                                                 <CheckCircle2 className="w-3 h-3" /> Chính xác
                                                             </span>
                                                         )}
-                                                        {!isCorrectOpt && isAnswered && (
+                                                        {(!isMultiTF && !isCorrectOpt && isAnswered) && (
                                                             <span className="ml-auto flex items-center gap-1 text-red-600 text-[9px] font-black uppercase tracking-tighter">
                                                                 <XCircle className="w-3 h-3" /> Bạn đã chọn
                                                             </span>
                                                         )}
-                                                        {isCorrectOpt && !isAnswered && (
+                                                        {(!isMultiTF && isCorrectOpt && !isAnswered) && (
                                                             <span className="ml-auto flex items-center gap-1 text-emerald-600 text-[9px] font-black uppercase tracking-tighter">
                                                                 <CheckCircle2 className="w-3 h-3" /> Đáp án đúng
+                                                            </span>
+                                                        )}
+                                                        {(isMultiTF && isAnswered && isCorrectOpt) && (
+                                                            <span className="ml-auto flex items-center gap-1 text-emerald-600 text-[9px] font-black uppercase tracking-tighter">
+                                                                <CheckCircle2 className="w-3 h-3" /> Chính xác
+                                                            </span>
+                                                        )}
+                                                        {(isMultiTF && isAnswered && !isCorrectOpt) && (
+                                                            <div className="ml-auto flex flex-col items-end gap-0.5">
+                                                                <span className="flex items-center gap-1 text-red-600 text-[9px] font-black uppercase tracking-tighter">
+                                                                    <XCircle className="w-3 h-3" /> Sai
+                                                                </span>
+                                                                <span className="text-[8px] text-gray-500 uppercase font-bold">Đáp án: {question.correctAnswer[oIndex] ? 'ĐÚNG' : 'SAI'}</span>
+                                                            </div>
+                                                        )}
+                                                        {(isMultiTF && !isAnswered) && (
+                                                            <span className="ml-auto flex items-center gap-1 text-gray-400 text-[9px] font-black uppercase tracking-tighter">
+                                                                Đáp án: {question.correctAnswer[oIndex] ? 'ĐÚNG' : 'SAI'}
                                                             </span>
                                                         )}
                                                     </div>

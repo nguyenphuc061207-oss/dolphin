@@ -1,17 +1,30 @@
 /**
- * Dolphin – Advanced Question Parser v2
+ * Dolphin – Advanced Question Parser v3
  * Supports: Plain text, HTML (from mammoth .docx), and raw text (from PDF)
  *
  * Question Types:
- *   "single"     – Standard 4-option MCQ, single correct answer
+ *   "single"     – Standard MCQ, single correct answer
  *   "multiple"   – Multi-select (Đáp án: A, B, C  or  [Loại: Chọn nhiều])
  *   "true_false" – Only Đúng/Sai options  or  [Loại: Đúng/Sai]
- *   "essay"      – No A-D options found, or [Loại: Tự luận]
+ *   "essay"      – No options found, or [Loại: Tự luận]
  *
  * Detects correct answers via 3 methods:
- *   Format A: Bold/Underline formatting on options (<strong>, <u>)
- *   Format B: Inline answer lines (Đáp án:, Key:, Chọn:)
+ *   Format A: Bold/Underline formatting on options (<strong>, <u>, <b>)
+ *   Format B: Inline answer lines (Đáp án:, Đáp án đúng:, Key:, Chọn:, Answer:)
  *   Format C: Answer key table at end of document (1-A, 2-C, 3-B ...)
+ *
+ * v3 Changes vs v2:
+ *   - OPTION_REGEX is now strict: only `.` or `)` delimiters, not bare space
+ *     → prevents normal sentences starting with a letter being misread as options
+ *   - Fixed "tự luận" type-tag detection bug (v2 checked for 'tuan' which never matched)
+ *   - Format A: accumulates ALL bold/underline options → correct multi-select detection
+ *   - extractAnswerKeyTable: section-header isolation + MIN_KEY_ENTRIES threshold
+ *     → eliminates false positives from option/sentence text
+ *   - QUESTION_NUM_ONLY: removed `:` as delimiter → won't mis-parse "1: A" answer lines
+ *   - Multi-line support: continuation lines append to current option or question content
+ *   - parseAnswerLine: added "đáp án đúng" variant + end-anchor `$`
+ *   - applyAnswerKeyTable extracted as shared helper
+ *   - hasFormattingMark: requires non-whitespace content inside the tag
  */
 
 import { normalizeUnicodeToLatex } from '../components/MathText';
@@ -20,15 +33,14 @@ import { normalizeUnicodeToLatex } from '../components/MathText';
 // Helpers
 // ─────────────────────────────────────────────
 
-const LETTER_TO_INDEX = { a: 0, b: 1, c: 2, d: 3 };
-
-/** Map a single letter (case-insensitive) to 0-3 index, or -1 */
+/** Map a letter (case-insensitive) to 0-based index (a=0 … z=25), or -1 */
 function letterToIndex(letter) {
     if (!letter) return -1;
-    return LETTER_TO_INDEX[letter.trim().toLowerCase()] ?? -1;
+    const ch = letter.trim().toLowerCase().charCodeAt(0);
+    return ch >= 97 && ch <= 122 ? ch - 97 : -1;
 }
 
-/** Strip all HTML tags and decode basic entities */
+/** Strip all HTML tags and decode common entities; collapse internal whitespace */
 function stripHtml(html) {
     return html
         .replace(/<br\s*\/?>/gi, '\n')
@@ -39,34 +51,41 @@ function stripHtml(html) {
         .replace(/&nbsp;/g, ' ')
         .replace(/&quot;/g, '"')
         .replace(/&#39;/g, "'")
+        .replace(/\s+/g, ' ')
         .trim();
 }
 
-/** Check if an HTML fragment contains <strong> or <u> wrapping meaningful content */
+/**
+ * Return true if the HTML fragment contains a <strong>, <u>, or <b> tag
+ * wrapping at least one non-whitespace character.
+ * v3: Added \s* guards so an empty <strong> </strong> doesn't trigger a hit.
+ */
 function hasFormattingMark(html) {
-    return /<strong\b[^>]*>[^<]+<\/strong>/i.test(html) ||
-           /<u\b[^>]*>[^<]+<\/u>/i.test(html) ||
-           /<b\b[^>]*>[^<]+<\/b>/i.test(html);
+    return /<(?:strong|u|b)\b[^>]*>\s*[^<\s][^<]*<\/(?:strong|u|b)>/i.test(html);
 }
 
 // ─────────────────────────────────────────────
-// Type tag inline detection
+// Type-tag inline detection
 // ─────────────────────────────────────────────
 
-const TYPE_TAG_REGEX = /\[Loại\s*:\s*(Chọn\s*nhiều|Đúng\s*\/\s*Sai|Tự\s*luận)\]/i;
+const TYPE_TAG_REGEX = /\[Loại\s*:?\s*(Chọn\s*nhiều|Đúng\s*\/\s*Sai|Tự\s*luận)\]/i;
 
-/** Extract explicit type tag from content, returns null if none */
+/**
+ * Extract explicit [Loại: ...] tag → type string, or null.
+ * v3: Uses targeted regex per variant instead of broken string-collapse comparison.
+ *     v2 had `v.includes('tuan')` which never matched "tựluận".
+ */
 function extractTypeTag(text) {
     const m = text.match(TYPE_TAG_REGEX);
     if (!m) return null;
-    const v = m[1].toLowerCase().replace(/\s+/g, '');
-    if (v.includes('chọnnhiều') || v.includes('chonnhieu')) return 'multiple';
-    if (v.includes('đúng/sai') || v.includes('dung/sai')) return 'true_false';
-    if (v.includes('tựluận') || v.includes('tuan')) return 'essay';
+    const v = m[1].trim();
+    if (/ch[oọ]n\s*nhi[eê]u/i.test(v)) return 'multiple';
+    if (/[dđ][uú]ng\s*\/\s*sai/i.test(v)) return 'multi_true_false';
+    if (/t[ựừu]\s*lu[aậ]n/i.test(v)) return 'essay';
     return null;
 }
 
-/** Remove type tag from content string */
+/** Remove [Loại: ...] tag from a content string */
 function removeTypeTag(text) {
     return text.replace(TYPE_TAG_REGEX, '').trim();
 }
@@ -76,82 +95,167 @@ function removeTypeTag(text) {
 // ─────────────────────────────────────────────
 
 /**
- * Scan the entire text for answer key patterns like:
- *   "1-A", "1.A", "1: A", "1 - A", "Câu 1: A", etc.
- *   Also detects multi-answer: "1-A,B" or "1: A, B, C"
- * Returns a Map<number, number|number[]> mapping question number → correctAnswer
+ * Minimum number of entries a key-table cluster must have to be accepted.
+ * Prevents stray "1-A" or "2.B" inside question text from polluting the map.
+ */
+const MIN_KEY_ENTRIES = 3;
+
+/**
+ * Scan text for patterns like "1-A", "2: B,C", "Câu 3 – A".
+ *
+ * v3 improvements:
+ *   1. Tries to isolate a dedicated answer-key section first (look for header
+ *      keywords: "đáp án", "answer key", "bảng đáp án").
+ *   2. If no header found, only accepts the result when ≥ MIN_KEY_ENTRIES match,
+ *      to reduce false positives from option lines or running text.
+ *
+ * Returns Map<number, number | number[]>
  */
 function extractAnswerKeyTable(text) {
     const keyMap = new Map();
-    // Match: 1-A,B or 1: A or Câu 1: A,B,C
-    const regex = /(?:câu\s*)?(\d+)\s*[.\-:\s]\s*([A-Da-d](?:\s*[,/]\s*[A-Da-d])*)\b/gi;
-    let match;
-    while ((match = regex.exec(text)) !== null) {
-        const qNum = parseInt(match[1], 10);
-        const letters = match[2].split(/[\s,/]+/).map(l => l.trim()).filter(Boolean);
+
+    // Try to isolate a dedicated section that starts with a header keyword
+    const sectionMatch = text.match(
+        /(?:đáp\s*án|answer\s*key|bảng\s*đáp\s*án)\s*[:\.\n]([\s\S]*)/i
+    );
+    const scanText = sectionMatch ? sectionMatch[1] : text;
+
+    // v3: separator list is explicit (-, –, ., :) — bare space removed to cut noise
+    const regex = /(?:câu\s*)?(\d+)\s*[-–.:]\s*([A-Za-z](?:\s*[,/]\s*[A-Za-z])*)\b/g;
+    let m;
+    while ((m = regex.exec(scanText)) !== null) {
+        const qNum = parseInt(m[1], 10);
+        const letters = m[2].split(/[\s,/]+/).map(l => l.trim()).filter(Boolean);
         if (qNum > 0 && letters.length > 0) {
-            const indices = letters.map(l => letterToIndex(l)).filter(i => i >= 0);
-            if (indices.length === 1) {
-                keyMap.set(qNum, indices[0]);
-            } else if (indices.length > 1) {
-                keyMap.set(qNum, indices); // multi-answer → array
-            }
+            const indices = letters.map(letterToIndex).filter(i => i >= 0);
+            if (indices.length === 1) keyMap.set(qNum, indices[0]);
+            else if (indices.length > 1) keyMap.set(qNum, indices);
         }
     }
+
+    // If we didn't find a dedicated section, enforce the minimum-cluster threshold
+    if (!sectionMatch && keyMap.size < MIN_KEY_ENTRIES) {
+        keyMap.clear();
+    }
+
     return keyMap;
 }
 
 // ─────────────────────────────────────────────
-// Option line regex – handles A. / A) / A: / A,
+// Option line parsing
 // ─────────────────────────────────────────────
 
-const OPTION_REGEX = /^([A-Da-d])\s*[.):\s]\s*(.*)/;
-
 /**
- * Identify which option letter a line starts with.
- * Returns { letter: 'A', text: '...', index: 0 } or null
+ * Strict option regex: letter MUST be followed by `.` or `)` then whitespace.
+ * v3 fix: v2 used `[.):\s]` which matched any single space, causing normal
+ * sentences that start with a letter (e.g. "Học sinh…") to be parsed as options.
+ *
+ * Primary:  "A. text"  "A) text"
+ * Fallback: "A: text"  (less common but seen in some Vietnamese exams)
  */
+const OPTION_REGEX = /^([A-Za-z])[.)]\s+(.+)/;
+const OPTION_COLON_REGEX = /^([A-Za-z]):\s+(.+)/;
+
 function parseOptionLine(line) {
     const clean = line.trim();
-    const m = clean.match(OPTION_REGEX);
+    const m = clean.match(OPTION_REGEX) ?? clean.match(OPTION_COLON_REGEX);
     if (!m) return null;
     const letter = m[1].toUpperCase();
-    const text = m[2].trim();
     const index = letterToIndex(letter);
-    return { letter, text, index };
+    if (index < 0) return null;
+    return { letter, text: m[2].trim(), index };
 }
 
 // ─────────────────────────────────────────────
 // Inline answer line detection (Format B)
-// Supports multi-answer: "Đáp án: A, B, C"
 // ─────────────────────────────────────────────
 
-const ANSWER_LINE_REGEX = /^(?:đáp\s*án|key|chọn|answer)\s*[:.]?\s*([A-Da-d](?:\s*[,/]\s*[A-Da-d])*)\b/i;
+/**
+ * Parse a multi-statement True/False answer.
+ * Examples: "a-Đúng, b-Đúng, c-Đúng, d-Sai" or "A: Đúng, B: Sai, C: Đúng, D: Sai"
+ * Abbrev: "a-Đ, b-S, c-Đ, d-S" or "A-T, B-F"
+ */
+export function parseMultiTrueFalseAnswer(text) {
+    const clean = text.trim();
+    // Match option letter and value: e.g. "a-Đúng", "B: Sai", "c) Đ", "d. S"
+    const pairRegex = /([a-zA-Z])\s*[-.:)]\s*([đđĐDsS][úuúnnggai]*|[tTfF][rRuUeEaAlLsSeE]*)\b/gi;
+    
+    const matches = [...clean.matchAll(pairRegex)];
+    if (matches.length === 0) return null;
+    
+    const result = [];
+    let maxIndex = -1;
+    
+    for (const match of matches) {
+        const letter = match[1];
+        const valueStr = match[2].toLowerCase();
+        const index = letterToIndex(letter);
+        if (index >= 0) {
+            // Match any variant of "đúng", "đ", "true", "t"
+            const isTrue = /[đđđDd][úuúnngg]*|[tT][rRuUeE]*/.test(valueStr);
+            result[index] = isTrue;
+            if (index > maxIndex) maxIndex = index;
+        }
+    }
+    
+    if (maxIndex < 0) return null;
+    
+    // Fill holes with false
+    const finalAnswers = [];
+    for (let i = 0; i <= maxIndex; i++) {
+        finalAnswers[i] = result[i] ?? false;
+    }
+    
+    return finalAnswers;
+}
 
 /**
- * Parse inline answer line.
- * Returns a single index (number) or array of indices, or -1 if not found.
+ * v3: Added "đáp án đúng" variant and end-anchor `$` so a partial match
+ *     inside a longer sentence does not produce a spurious answer.
  */
+const ANSWER_LINE_REGEX =
+    /^(?:đáp\s*án(?:\s*đúng)?|key|chọn|answer)\s*[:.]?\s*([A-Za-z](?:\s*[,/]\s*[A-Za-z])*)\s*$/i;
+
+/** Returns a single index, an array of indices, an array of T/F booleans, or -1 if line is not an answer line. */
 function parseAnswerLine(line) {
-    const m = line.trim().match(ANSWER_LINE_REGEX);
+    const clean = line.trim();
+    
+    // 1. Try to parse as Multi-statement True/False answer by stripping prefix
+    const prefixRegex = /^(?:đáp\s*án(?:\s*đúng)?|key|chọn|answer)\s*[:.]?\s*(.*)$/i;
+    const prefixMatch = clean.match(prefixRegex);
+    if (prefixMatch) {
+        const potentialTF = parseMultiTrueFalseAnswer(prefixMatch[1]);
+        if (potentialTF) {
+            return potentialTF;
+        }
+    }
+    
+    // 2. Fallback to standard parser
+    const m = clean.match(ANSWER_LINE_REGEX);
     if (!m) return -1;
     const letters = m[1].split(/[\s,/]+/).map(l => l.trim()).filter(Boolean);
-    const indices = letters.map(l => letterToIndex(l)).filter(i => i >= 0);
+    const indices = letters.map(letterToIndex).filter(i => i >= 0);
     if (indices.length === 0) return -1;
-    if (indices.length === 1) return indices[0];
-    return indices; // multi
+    return indices.length === 1 ? indices[0] : indices;
 }
 
 // ─────────────────────────────────────────────
-// Question block regex
+// Question-start line detection
 // ─────────────────────────────────────────────
 
-const QUESTION_START_REGEX = /^(?:câu|question|q)\s*(\d+)\s*[.:)]\s*(.*)/i;
-const QUESTION_NUM_ONLY = /^(\d+)\s*[.:)]\s*(.*)/;
+/** Named prefix: "Câu 1.", "Câu 1:", "Question 2)", "Q3." */
+const QUESTION_NAMED_REGEX = /^(?:câu|question|q\.?)\s*(\d+)\s*[.:)]\s*(.*)/i;
+
+/**
+ * Bare number: "1. text", "2) text"
+ * v3 fix: v2 also accepted `:` here which caused "1: A" answer-key lines to be
+ * misread as question starts. Removed `:` from the delimiter class.
+ */
+const QUESTION_NUM_ONLY = /^(\d+)[.)]\s+(.*)/;
 
 function parseQuestionStart(line) {
-    const clean = line.trim().replace(/^[^\w\s]+/, '');
-    let m = clean.match(QUESTION_START_REGEX);
+    const clean = line.trim().replace(/^\uFEFF/, ''); // strip BOM
+    let m = clean.match(QUESTION_NAMED_REGEX);
     if (m) return { num: parseInt(m[1], 10), content: m[2].trim() };
     m = clean.match(QUESTION_NUM_ONLY);
     if (m) return { num: parseInt(m[1], 10), content: m[2].trim() };
@@ -162,59 +266,75 @@ function parseQuestionStart(line) {
 // True/False option detector
 // ─────────────────────────────────────────────
 
-const TRUE_FALSE_TEXTS = ['đúng', 'sai', 'true', 'false', 'đ', 's'];
+const TRUE_FALSE_TEXTS = new Set([
+    'đúng', 'sai', 'true', 'false', 'đ', 's', 'correct', 'incorrect',
+]);
 
 function isTrueFalseOptions(options) {
     const nonEmpty = options.filter(o => o && o.trim() !== '');
     if (nonEmpty.length < 2) return false;
-    return nonEmpty.every(o => TRUE_FALSE_TEXTS.includes(o.trim().toLowerCase()));
+    return nonEmpty.every(o => TRUE_FALSE_TEXTS.has(o.trim().toLowerCase()));
 }
 
 // ─────────────────────────────────────────────
-// Determine type for a parsed block
+// Determine question type for a parsed block
 // ─────────────────────────────────────────────
 
 function determineType(block) {
-    // 1. Explicit tag in content
-    const tag = extractTypeTag(block.content + ' ' + block.options.join(' '));
+    const combined = block.content + ' ' + block.options.filter(Boolean).join(' ');
+    const tag = extractTypeTag(combined);
     if (tag) return tag;
 
-    // 2. Essay: no options found
     const hasOptions = block.options.some(o => o && o.trim() !== '');
     if (!hasOptions) return 'essay';
 
-    // 3. True/False by option text
+    // If correctAnswer is an array of booleans, it's multi_true_false!
+    if (Array.isArray(block.correctAnswer) && block.correctAnswer.length > 0 && block.correctAnswer.every(val => typeof val === 'boolean')) {
+        return 'multi_true_false';
+    }
+
     if (isTrueFalseOptions(block.options)) return 'true_false';
 
-    // 4. Multiple choice: correctAnswer is an array
-    if (Array.isArray(block.correctAnswer)) return 'multiple';
+    if (Array.isArray(block.correctAnswer) && block.correctAnswer.length > 1)
+        return 'multiple';
 
-    // 5. Default: single
     return 'single';
 }
 
 // ─────────────────────────────────────────────
-// Finalize block: assign type, clean content, default correctAnswer
+// Finalize a raw block into the output shape
 // ─────────────────────────────────────────────
 
 function finalizeBlock(block) {
+    // Trim sparse array: drop trailing empty/undefined slots
+    let lastValid = -1;
+    for (let i = 0; i < block.options.length; i++) {
+        if (block.options[i] !== undefined && block.options[i] !== '') lastValid = i;
+    }
+    block.options = Array.from({ length: lastValid + 1 }, (_, i) => block.options[i] ?? '');
+
     const type = determineType(block);
+    const content = removeTypeTag(block.content.trim());
+    let { correctAnswer } = block;
 
-    // Clean type tag from content
-    let content = removeTypeTag(block.content.trim());
-
-    // Default correctAnswer by type
-    let correctAnswer = block.correctAnswer;
     if (type === 'essay') {
-        correctAnswer = ''; // essays have no preset answer
-    } else if (type === 'multiple') {
+        correctAnswer = '';
+    } else if (type === 'multi_true_false') {
         if (!Array.isArray(correctAnswer)) {
-            correctAnswer = correctAnswer >= 0 ? [correctAnswer] : [0];
+            correctAnswer = Array(block.options.length).fill(false);
+        } else {
+            correctAnswer = block.options.map((_, idx) => {
+                if (typeof correctAnswer[idx] === 'boolean') return correctAnswer[idx];
+                return false;
+            });
         }
+    } else if (type === 'multiple') {
+        if (!Array.isArray(correctAnswer))
+            correctAnswer = correctAnswer >= 0 ? [correctAnswer] : [0];
     } else {
         // single / true_false
         if (Array.isArray(correctAnswer)) correctAnswer = correctAnswer[0] ?? 0;
-        if (correctAnswer < 0) correctAnswer = 0;
+        if (typeof correctAnswer !== 'number' || correctAnswer < 0) correctAnswer = 0;
     }
 
     return {
@@ -227,86 +347,127 @@ function finalizeBlock(block) {
 }
 
 // ─────────────────────────────────────────────
-// Main parser: works on plain text lines
+// Shared helper: apply Format-C key table to unanswered blocks
+// ─────────────────────────────────────────────
+
+function applyAnswerKeyTable(blocks, keyMap) {
+    for (const block of blocks) {
+        const unanswered =
+            block.correctAnswer === -1 ||
+            (Array.isArray(block.correctAnswer) && block.correctAnswer.length === 0);
+        if (unanswered && keyMap.has(block.num)) {
+            block.correctAnswer = keyMap.get(block.num);
+        }
+    }
+}
+
+// ─────────────────────────────────────────────
+// Plain-text parser
 // ─────────────────────────────────────────────
 
 /**
- * Parse plain text (no HTML) into question objects.
- * @param {string} text - raw text content
- * @returns {Array<{content, type, options, correctAnswer}>}
+ * Parse plain text into question objects.
+ *
+ * v3: Supports multi-line question bodies and multi-line option text.
+ *     Continuation lines (lines that don't start a new question/option/answer)
+ *     are appended to the previous option or to the question content if no
+ *     options have been seen yet.
+ *
+ * @param {string} text
+ * @returns {Array<{num, content, type, options, correctAnswer}>}
  */
 export function parseQuestionsFromText(text) {
-    if (!text || !text.trim()) return [];
+    if (!text?.trim()) return [];
 
-    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l !== '');
-
-    // Pre-scan for answer key table (Format C)
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     const answerKeyTable = extractAnswerKeyTable(text);
 
-    const questionBlocks = [];
-    let currentBlock = null;
+    const blocks = [];
+    let cur = null;
+    let lastOptionIndex = -1; // track last parsed option for continuation lines
 
-    for (const line of lines) {
+    const processSingleLine = (line) => {
+        // ── New question? ──────────────────────────────────────────────────────
         const qStart = parseQuestionStart(line);
         if (qStart) {
-            if (currentBlock) questionBlocks.push(currentBlock);
-            currentBlock = {
-                num: qStart.num,
-                content: qStart.content,
-                options: ['', '', '', ''],
-                correctAnswer: -1
-            };
-            continue;
+            if (cur) blocks.push(cur);
+            cur = { num: qStart.num, content: qStart.content, options: [], correctAnswer: -1 };
+            lastOptionIndex = -1;
+            return;
         }
 
-        if (!currentBlock) continue;
+        if (!cur) return;
 
+        // ── MCQ option? ────────────────────────────────────────────────────────
         const optLine = parseOptionLine(line);
         if (optLine) {
-            currentBlock.options[optLine.index] = optLine.text;
-            continue;
+            cur.options[optLine.index] = optLine.text;
+            lastOptionIndex = optLine.index;
+            return;
         }
 
-        // Format B: inline answer (may be multi)
-        const inlineAnswer = parseAnswerLine(line);
-        if (inlineAnswer !== -1) {
-            currentBlock.correctAnswer = inlineAnswer;
-            continue;
+        // ── Inline answer (Format B)? ──────────────────────────────────────────
+        const inlineAns = parseAnswerLine(line);
+        if (inlineAns !== -1) {
+            cur.correctAnswer = inlineAns;
+            lastOptionIndex = -1; // reset; answer line is not a continuation target
+            return;
         }
 
-        // Append to question content if no options collected yet
-        if (currentBlock.options.every(o => o === '')) {
-            currentBlock.content += ' ' + line;
+        // ── Continuation line ──────────────────────────────────────────────────
+        if (lastOptionIndex >= 0 && cur.options[lastOptionIndex] !== undefined) {
+            // Append to the most recently parsed option
+            cur.options[lastOptionIndex] += ' ' + line;
+        } else if (cur.options.length === 0) {
+            // No options collected yet → still building the question stem
+            cur.content += ' ' + line;
         }
+    };
+
+    for (const line of lines) {
+        const embeddedMatch = line.match(/^(.*?)\s*\b(đáp\s*án(?:\s*đúng)?|key|chọn|answer)\s*[:.]?\s*(.*)$/i);
+        if (embeddedMatch) {
+            const before = embeddedMatch[1].trim();
+            const keyword = embeddedMatch[2];
+            const after = embeddedMatch[3].trim();
+            
+            const isStandardAns = /^[A-Za-z](?:\s*[,/]\s*[A-Za-z])*\s*$/i.test(after);
+            const isMultiTFAns = parseMultiTrueFalseAnswer(after) !== null;
+            
+            if (isStandardAns || isMultiTFAns) {
+                if (before) processSingleLine(before);
+                processSingleLine(`${keyword}: ${after}`);
+                continue;
+            }
+        }
+        processSingleLine(line);
     }
 
-    if (currentBlock) questionBlocks.push(currentBlock);
+    if (cur) blocks.push(cur);
+    applyAnswerKeyTable(blocks, answerKeyTable);
 
-    // Apply answer key table (Format C) as fallback
-    for (const block of questionBlocks) {
-        const isUnanswered = block.correctAnswer === -1 ||
-            (Array.isArray(block.correctAnswer) && block.correctAnswer.length === 0);
-        if (isUnanswered && answerKeyTable.has(block.num)) {
-            block.correctAnswer = answerKeyTable.get(block.num);
-        }
-    }
-
-    return questionBlocks
+    return blocks
         .filter(b => b.content.trim() !== '')
         .map(finalizeBlock);
 }
 
 // ─────────────────────────────────────────────
-// HTML parser: detects formatting marks (Format A)
+// HTML parser (mammoth .docx output)
 // ─────────────────────────────────────────────
 
 /**
- * Parse HTML content (from mammoth .docx conversion).
- * @param {string} html - HTML string from mammoth
- * @returns {Array<{content, type, options, correctAnswer}>}
+ * Parse HTML (from mammoth .docx conversion) into question objects.
+ *
+ * v3: Format A now accumulates ALL bold/underlined options in `_boldAnswers`.
+ *     After the block is complete the array is resolved to a single index (single)
+ *     or an array of indices (multi-select) before being assigned to correctAnswer.
+ *     v2 overwrote correctAnswer on every hit, keeping only the last one.
+ *
+ * @param {string} html
+ * @returns {Array<{num, content, type, options, correctAnswer}>}
  */
 export function parseQuestionsFromHtml(html) {
-    if (!html || !html.trim()) return [];
+    if (!html?.trim()) return [];
 
     const normalized = html
         .replace(/<br\s*\/?>/gi, '\n')
@@ -315,73 +476,120 @@ export function parseQuestionsFromHtml(html) {
         .replace(/<span[^>]*>/gi, '')
         .replace(/<\/span>/gi, '');
 
-    const htmlLines = normalized.split(/\r?\n/)
+    const htmlLines = normalized
+        .split(/\r?\n/)
         .map(l => l.trim())
-        .filter(l => l !== '' && !/^&nbsp;$/.test(l));
-    const textLines = htmlLines.map(l => stripHtml(l));
+        .filter(l => l !== '' && l !== '&nbsp;');
 
+    const rawTextLines = htmlLines.map(stripHtml);
+    
+    // Split embedded answer lines first, maintaining strict parallel arrays for text and html lines
+    const textLines = [];
+    const processedHtmlLines = [];
+    for (let i = 0; i < rawTextLines.length; i++) {
+        const line = rawTextLines[i];
+        const rawHtml = htmlLines[i];
+        
+        const embeddedMatch = line.match(/^(.*?)\s*\b(đáp\s*án(?:\s*đúng)?|key|chọn|answer)\s*[:.]?\s*(.*)$/i);
+        if (embeddedMatch) {
+            const before = embeddedMatch[1].trim();
+            const keyword = embeddedMatch[2];
+            const after = embeddedMatch[3].trim();
+            
+            const isStandardAns = /^[A-Za-z](?:\s*[,/]\s*[A-Za-z])*\s*$/i.test(after);
+            const isMultiTFAns = parseMultiTrueFalseAnswer(after) !== null;
+            
+            if (isStandardAns || isMultiTFAns) {
+                if (before) {
+                    textLines.push(before);
+                    processedHtmlLines.push(rawHtml);
+                }
+                textLines.push(`${keyword}: ${after}`);
+                processedHtmlLines.push(`<p>${keyword}: ${after}</p>`);
+                continue;
+            }
+        }
+        textLines.push(line);
+        processedHtmlLines.push(rawHtml);
+    }
+    
     const plainText = textLines.join('\n');
     const answerKeyTable = extractAnswerKeyTable(plainText);
 
-    const questionBlocks = [];
-    let currentBlock = null;
+    const blocks = [];
+    let cur = null;
+    let lastOptionIndex = -1;
 
     for (let i = 0; i < textLines.length; i++) {
         const line = textLines[i];
-        const rawHtml = htmlLines[i];
+        const rawHtml = processedHtmlLines[i];
 
+        // ── New question? ──────────────────────────────────────────────────────
         const qStart = parseQuestionStart(line);
         if (qStart) {
-            if (currentBlock) questionBlocks.push(currentBlock);
-            currentBlock = {
+            if (cur) blocks.push(cur);
+            cur = {
                 num: qStart.num,
                 content: qStart.content,
-                options: ['', '', '', ''],
-                optionsHtml: ['', '', '', ''],
-                correctAnswer: -1
+                options: [],
+                optionsHtml: [],
+                correctAnswer: -1,
+                _boldAnswers: [], // v3: accumulate ALL Format-A hits
             };
+            lastOptionIndex = -1;
             continue;
         }
 
-        if (!currentBlock) continue;
+        if (!cur) continue;
 
+        // ── MCQ option? ────────────────────────────────────────────────────────
         const optLine = parseOptionLine(line);
         if (optLine) {
-            currentBlock.options[optLine.index] = optLine.text;
-            currentBlock.optionsHtml[optLine.index] = rawHtml;
+            cur.options[optLine.index] = optLine.text;
+            cur.optionsHtml[optLine.index] = rawHtml;
+            lastOptionIndex = optLine.index;
 
-            // Format A: detect bold/underline on this option
+            // Format A: collect this option if it carries a formatting mark
             if (hasFormattingMark(rawHtml)) {
-                currentBlock.correctAnswer = optLine.index;
+                cur._boldAnswers.push(optLine.index);
             }
             continue;
         }
 
-        // Format B: inline answer (may be multi)
-        const inlineAnswer = parseAnswerLine(line);
-        if (inlineAnswer !== -1) {
-            currentBlock.correctAnswer = inlineAnswer;
+        // ── Inline answer (Format B)? ──────────────────────────────────────────
+        const inlineAns = parseAnswerLine(line);
+        if (inlineAns !== -1) {
+            cur.correctAnswer = inlineAns;
+            lastOptionIndex = -1;
             continue;
         }
 
-        if (currentBlock.options.every(o => o === '')) {
-            currentBlock.content += ' ' + line;
+        // ── Continuation line ──────────────────────────────────────────────────
+        if (lastOptionIndex >= 0 && cur.options[lastOptionIndex] !== undefined) {
+            cur.options[lastOptionIndex] += ' ' + line;
+            cur.optionsHtml[lastOptionIndex] += ' ' + rawHtml;
+        } else if (cur.options.length === 0) {
+            cur.content += ' ' + line;
         }
     }
 
-    if (currentBlock) questionBlocks.push(currentBlock);
+    if (cur) blocks.push(cur);
 
-    // Apply Format C as last-resort fallback
-    for (const block of questionBlocks) {
-        const isUnanswered = block.correctAnswer === -1 ||
-            (Array.isArray(block.correctAnswer) && block.correctAnswer.length === 0);
-        if (isUnanswered && answerKeyTable.has(block.num)) {
-            block.correctAnswer = answerKeyTable.get(block.num);
+    // Resolve Format-A bold answers; only apply when Format B hasn't fired
+    for (const block of blocks) {
+        if (block._boldAnswers.length > 0 && block.correctAnswer === -1) {
+            block.correctAnswer =
+                block._boldAnswers.length === 1
+                    ? block._boldAnswers[0]
+                    : block._boldAnswers; // multi-select
         }
+        delete block._boldAnswers;
         delete block.optionsHtml;
     }
 
-    return questionBlocks
+    applyAnswerKeyTable(blocks, answerKeyTable);
+
+    return blocks
         .filter(b => b.content.trim() !== '')
         .map(finalizeBlock);
 }

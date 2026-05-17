@@ -24,16 +24,18 @@ import {
 
 // ── Helpers ──────────────────────────────────────────────
 const TYPE_LABELS = {
-  single:     { label: 'Trắc nghiệm', color: 'bg-blue-100 text-blue-700' },
-  multiple:   { label: 'Chọn nhiều',  color: 'bg-purple-100 text-purple-700' },
-  true_false: { label: 'Đúng/Sai',   color: 'bg-amber-100 text-amber-700' },
-  essay:      { label: 'Tự luận',    color: 'bg-emerald-100 text-emerald-700' },
+  single:           { label: 'Trắc nghiệm', color: 'bg-blue-100 text-blue-700' },
+  multiple:         { label: 'Chọn nhiều',  color: 'bg-purple-100 text-purple-700' },
+  true_false:       { label: 'Đúng/Sai',   color: 'bg-amber-100 text-amber-700' },
+  multi_true_false: { label: 'Đúng/Sai Nhiều Ý', color: 'bg-orange-100 text-orange-700' },
+  essay:            { label: 'Tự luận',    color: 'bg-emerald-100 text-emerald-700' },
 };
 
 /** Whether a question has been answered (any type) */
 function isAnswered(answer, type) {
   if (type === 'essay') return typeof answer === 'string' && answer.trim() !== '';
   if (type === 'multiple') return Array.isArray(answer) && answer.length > 0;
+  if (type === 'multi_true_false') return Array.isArray(answer) && answer.some(v => v !== null && v !== undefined);
   return answer !== undefined && answer !== null;
 }
 
@@ -44,6 +46,16 @@ function toggleMultiple(prev, idx) {
   if (pos >= 0) arr.splice(pos, 1);
   else arr.push(idx);
   return arr;
+}
+
+/** Helper to determine if all options are short for grid rendering */
+function isShortOptions(options) {
+  if (!options || options.length === 0) return false;
+  return options.every(opt => {
+    if (!opt) return true;
+    const cleanText = opt.replace(/<[^>]+>/g, '').replace(/\$[^\$]+\$/g, '');
+    return cleanText.trim().length < 25;
+  });
 }
 
 export default function TakeExam() {
@@ -66,6 +78,21 @@ export default function TakeExam() {
 
   const questionRefs = useRef([]);
 
+  // Anti-cheat: DevTools Console self-XSS warning
+  useEffect(() => {
+    const warningTitle = "⚠️ DỪNG LẠI!";
+    const warningTitleStyle = "color: #ff0000; font-size: 40px; font-weight: 800; font-family: sans-serif; text-shadow: 2px 2px 0px #000; padding: 10px;";
+    
+    const warningDesc = "Đây là tính năng dành cho nhà phát triển (Developer Tools).\n\nNếu ai đó yêu cầu bạn sao chép và dán bất kỳ đoạn mã (code) nào vào đây để \"HACK ĐÁP ÁN\" hoặc \"XEM ĐÁP ÁN TRƯỚC\", ĐỪNG LÀM THEO! Đó là một trò lừa đảo.\n\nViệc dán code lạ vào Console có thể dẫn đến:\n1. Bị phát hiện gian lận và HỦY BỎ BÀI THI ngay lập tức.\n2. Bị đánh cắp thông tin đăng nhập tài khoản.\n3. Gửi các yêu cầu phá hoại lên hệ thống dưới danh nghĩa của bạn.\n\nHãy tập trung làm bài bằng chính năng lực của mình để đạt kết quả tốt nhất!";
+    const warningDescStyle = "color: #1e293b; font-size: 14px; font-weight: 600; font-family: sans-serif; line-height: 1.6; padding: 5px;";
+    
+    const alertStyle = "color: #b91c1c; font-size: 16px; font-weight: 800; font-family: sans-serif; text-transform: uppercase;";
+
+    console.log(`%c${warningTitle}`, warningTitleStyle);
+    console.log(`%c${warningDesc}`, warningDescStyle);
+    console.log(`%c👉 MỌI HÀNH VI GIAN LẬN SẼ BỊ HỆ THỐNG GHI LẠI VÀ BÁO CÁO CHO GIÁO VIÊN!`, alertStyle);
+  }, []);
+
   // Fetch exam
   useEffect(() => {
     const fetchExam = async () => {
@@ -79,10 +106,18 @@ export default function TakeExam() {
             questions = questions.map((q) => {
               const indexed = q.options.map((opt, i) => ({ text: opt, orig: i }));
               indexed.sort(() => Math.random() - 0.5);
+              let newCorrectAnswer;
+              if (Array.isArray(q.correctAnswer)) {
+                newCorrectAnswer = q.correctAnswer
+                  .map(origIdx => indexed.findIndex(o => o.orig === origIdx))
+                  .filter(idx => idx >= 0);
+              } else {
+                newCorrectAnswer = indexed.findIndex((o) => o.orig === q.correctAnswer);
+              }
               return {
                 ...q,
                 options: indexed.map((o) => o.text),
-                correctAnswer: indexed.findIndex((o) => o.orig === q.correctAnswer),
+                correctAnswer: newCorrectAnswer,
               };
             });
           }
@@ -154,10 +189,14 @@ export default function TakeExam() {
     setIsInterrupted(false);
   };
 
-  const handleSelectAnswer = (qi, oi, type) => {
+  const handleSelectAnswer = (qi, oi, type, val) => {
     setUserAnswers((p) => {
       if (type === 'multiple') {
         return { ...p, [qi]: toggleMultiple(p[qi], oi) };
+      } else if (type === 'multi_true_false') {
+        const arr = Array.isArray(p[qi]) ? [...p[qi]] : Array(exam.questions[qi].options.length).fill(null);
+        arr[oi] = val;
+        return { ...p, [qi]: arr };
       }
       return { ...p, [qi]: oi };
     });
@@ -194,6 +233,23 @@ export default function TakeExam() {
         const ca = Array.isArray(q.correctAnswer) ? [...q.correctAnswer].sort().join(',') : '';
         const sa = Array.isArray(ans) ? [...ans].sort().join(',') : '';
         if (ca === sa && ca !== '') correct++;
+      } else if (type === 'multi_true_false') {
+        const statements = q.options.length;
+        let correctStmts = 0;
+        for (let j = 0; j < statements; j++) {
+          if (Array.isArray(ans) && ans[j] === q.correctAnswer[j]) correctStmts++;
+        }
+        let points = 0;
+        if (q.scoringMethod === 'gdpt_2018') {
+          const r = correctStmts / statements;
+          if (r === 1) points = 1;
+          else if (r >= 0.75) points = 0.5;
+          else if (r >= 0.5) points = 0.25;
+          else if (r >= 0.25) points = 0.1;
+        } else {
+          points = correctStmts / statements; // linear default
+        }
+        correct += points;
       } else {
         if (ans === q.correctAnswer) correct++;
       }
@@ -446,29 +502,45 @@ export default function TakeExam() {
                     />
                   )}
 
-                  {/* ── SINGLE / TRUE-FALSE / MULTIPLE ── */}
+                  {/* ── SINGLE / TRUE-FALSE / MULTIPLE / MULTI-TRUE-FALSE ── */}
                   {qType !== 'essay' && (
-                    <div className="space-y-2">
+                    <div className={`grid gap-3 ${isShortOptions(question.options) ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"}`}>
                       {question.options.filter(o => o !== undefined).map((opt, oi) => {
                         const isMulti = qType === 'multiple';
-                        const selected = isMulti
-                          ? Array.isArray(currentAnswer) && currentAnswer.includes(oi)
-                          : currentAnswer === oi;
+                        const isMultiTF = qType === 'multi_true_false';
+                        
+                        let selected = false;
+                        if (isMulti) selected = Array.isArray(currentAnswer) && currentAnswer.includes(oi);
+                        else if (isMultiTF) selected = Array.isArray(currentAnswer) && currentAnswer[oi] !== null && currentAnswer[oi] !== undefined;
+                        else selected = currentAnswer === oi;
 
                         return (
                           <div
                             key={oi}
-                            onClick={() => handleSelectAnswer(qi, oi, qType)}
-                            className={`flex items-center gap-3 px-3 py-2 rounded-lg border cursor-pointer transition-all ${
+                            onClick={() => !isMultiTF && handleSelectAnswer(qi, oi, qType)}
+                            className={`flex items-center gap-3 px-3 py-2 rounded-lg border transition-all ${!isMultiTF ? 'cursor-pointer' : ''} ${
                               selected
                                 ? isMulti
                                   ? "border-purple-500 bg-purple-50/60"
-                                  : "border-blue-500 bg-blue-50/60"
+                                  : isMultiTF
+                                    ? "border-orange-200 bg-orange-50/30"
+                                    : "border-blue-500 bg-blue-50/60"
                                 : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
                             }`}
                           >
-                            {/* Indicator: square for multiple, circle for single/tf */}
-                            {isMulti ? (
+                            {/* Indicator: square for multiple, circle for single/tf, True/False toggle for multi_true_false */}
+                            {isMultiTF ? (
+                                <div className="shrink-0 flex items-center gap-2 bg-white px-2 py-1 rounded border border-orange-200 shadow-sm">
+                                    <label className="flex items-center gap-1 cursor-pointer">
+                                        <input type="radio" checked={Array.isArray(currentAnswer) && currentAnswer[oi] === true} onChange={() => handleSelectAnswer(qi, oi, qType, true)} className="w-3.5 h-3.5 accent-orange-600" />
+                                        <span className="text-[10px] font-bold text-gray-700">Đ</span>
+                                    </label>
+                                    <label className="flex items-center gap-1 cursor-pointer">
+                                        <input type="radio" checked={Array.isArray(currentAnswer) && currentAnswer[oi] === false} onChange={() => handleSelectAnswer(qi, oi, qType, false)} className="w-3.5 h-3.5 accent-orange-600" />
+                                        <span className="text-[10px] font-bold text-gray-700">S</span>
+                                    </label>
+                                </div>
+                            ) : isMulti ? (
                               <span className={`shrink-0 w-7 h-7 rounded-md flex items-center justify-center text-xs font-bold border-2 transition-colors ${
                                 selected ? "border-purple-500 bg-purple-600 text-white" : "border-gray-300 text-gray-500 bg-white"
                               }`}>
@@ -481,8 +553,9 @@ export default function TakeExam() {
                                 {String.fromCharCode(65 + oi)}
                               </span>
                             )}
-                            <div className="text-[13px] font-medium text-gray-800" style={{ fontSize: `${fontSize}px` }}>
-                              <RichTextRenderer content={opt} mathDict={exam?.mathDictionary} />
+                            <div className="text-[13px] font-medium text-gray-800 flex-1" style={{ fontSize: `${fontSize}px` }}>
+                                {isMultiTF && <span className="font-bold mr-1">Ý {oi + 1}.</span>}
+                                <RichTextRenderer content={opt} mathDict={exam?.mathDictionary} />
                             </div>
                           </div>
                         );
