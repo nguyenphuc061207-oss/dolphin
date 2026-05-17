@@ -39,6 +39,21 @@ import {
 // Configure PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
+// ── Question type metadata ────────────────────────────────────────────
+const TYPE_LABELS = {
+    single:     { label: 'Trắc nghiệm', color: 'bg-blue-100 text-blue-700 border-blue-200' },
+    multiple:   { label: 'Chọn nhiều',  color: 'bg-purple-100 text-purple-700 border-purple-200' },
+    true_false: { label: 'Đúng/Sai',   color: 'bg-amber-100 text-amber-700 border-amber-200' },
+    essay:      { label: 'Tự luận',    color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+};
+
+const TYPE_OPTIONS = [
+    { value: 'single',     label: 'Trắc nghiệm (1 đáp án)' },
+    { value: 'multiple',   label: 'Chọn nhiều' },
+    { value: 'true_false', label: 'Đúng / Sai' },
+    { value: 'essay',      label: 'Tự luận' },
+];
+
 // --- TOGGLE SWITCH COMPONENT ---
 const ToggleSwitch = ({ enabled, onChange, label, description, icon: Icon }) => (
     <div className="flex items-center justify-between py-3">
@@ -560,6 +575,19 @@ export default function TeacherDashboard() {
         setQuestionTab('manual');
     };
 
+    /** Change type of a single question in the preview list */
+    const handlePreviewTypeChange = (idx, newType) => {
+        setPreviewQuestions(prev => prev.map((q, i) => {
+            if (i !== idx) return q;
+            // Reset correctAnswer to a sensible default for the new type
+            let correctAnswer = q.correctAnswer;
+            if (newType === 'essay') correctAnswer = '';
+            else if (newType === 'multiple') correctAnswer = Array.isArray(q.correctAnswer) ? q.correctAnswer : (q.correctAnswer >= 0 ? [q.correctAnswer] : [0]);
+            else correctAnswer = Array.isArray(q.correctAnswer) ? (q.correctAnswer[0] ?? 0) : (q.correctAnswer >= 0 ? q.correctAnswer : 0);
+            return { ...q, type: newType, correctAnswer };
+        }));
+    };
+
     const handleSaveExam = async () => {
         if (!examTitle.trim() || questions.length === 0) return alert("Vui lòng nhập tên đề và câu hỏi!");
         setIsSubmitting(true);
@@ -663,7 +691,7 @@ export default function TeacherDashboard() {
                                             <textarea value={importText} onChange={(e) => setImportText(e.target.value)} rows={8} className="w-full p-4 bg-purple-50/30 border border-purple-100 rounded-xl outline-none font-mono text-sm resize-none focus:ring-2 focus:ring-purple-400 focus:border-transparent transition-shadow" placeholder={`Câu 1: Thủ đô của Việt Nam là gì?\nA. Hà Nội\nB. Hồ Chí Minh\nC. Đà Nẵng\nD. Huế\nĐáp án: A\n\nCâu 2: ...`} />
                                             <div className="flex items-start gap-2 text-[11px] text-gray-400">
                                                 <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                                                <span>Hỗ trợ: <b>Đáp án:</b> ngay sau mỗi câu, hoặc <b>bảng đáp án</b> cuối văn bản (1-A, 2-C, 3-B...)</span>
+                                                <span>Hỗ trợ: <b>Đáp án: A</b> (1 đáp), <b>Đáp án: A, B</b> (nhiều đáp), <b>[Loại: Tự luận]</b>, <b>[Loại: Đúng/Sai]</b>, <b>[Loại: Chọn nhiều]</b></span>
                                             </div>
                                             <button onClick={handleProcessImportText} className="w-full py-4 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 transition-all flex items-center justify-center gap-2 shadow-md shadow-purple-200">
                                                 <Zap className="w-5 h-5" /> TỰ ĐỘNG NHẬN DIỆN
@@ -744,26 +772,63 @@ export default function TeacherDashboard() {
                                                 </h4>
                                                 <button onClick={() => setPreviewQuestions([])} className="text-xs text-gray-400 hover:text-red-500 transition font-bold">Xóa tất cả</button>
                                             </div>
-                                            <div className="max-h-64 overflow-y-auto space-y-3 pr-1 scrollbar-thin">
-                                                {previewQuestions.map((q, idx) => (
-                                                    <div key={idx} className="p-4 bg-gray-50 border border-gray-100 rounded-xl">
-                                                        <div className="text-sm font-bold text-gray-800 mb-2 flex items-baseline gap-1">
-                                                            <span>Câu {idx + 1}:</span>
-                                                            <RichTextRenderer content={q.content} mathDict={mathDictionary} />
-                                                        </div>
-                                                        <div className="grid grid-cols-2 gap-2">
-                                                            {q.options.map((opt, oi) => (
-                                                                <div key={oi} className={`text-xs px-3 py-2 rounded-lg border font-medium ${oi === q.correctAnswer
-                                                                    ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                                                                    : 'bg-white border-gray-100 text-gray-600'
-                                                                    }`}>
-                                                                    <span className="font-black mr-1">{String.fromCharCode(65 + oi)}.</span>
-                                                                    {opt ? <RichTextRenderer content={opt} mathDict={mathDictionary} /> : <span className="italic text-gray-300">Trống</span>}
+                                            <div className="max-h-80 overflow-y-auto space-y-3 pr-1 scrollbar-thin">
+                                                {previewQuestions.map((q, idx) => {
+                                                    const qType = q.type || 'single';
+                                                    const typeInfo = TYPE_LABELS[qType] || TYPE_LABELS.single;
+                                                    const isEssay = qType === 'essay';
+                                                    return (
+                                                        <div key={idx} className="p-4 bg-gray-50 border border-gray-100 rounded-xl">
+                                                            {/* Header row: number + type badge + type selector */}
+                                                            <div className="flex items-start justify-between gap-2 mb-2">
+                                                                <div className="text-sm font-bold text-gray-800 flex items-baseline gap-1 flex-1 min-w-0">
+                                                                    <span className="shrink-0">Câu {idx + 1}:</span>
+                                                                    <div className="truncate"><RichTextRenderer content={q.content} mathDict={mathDictionary} /></div>
                                                                 </div>
-                                                            ))}
+                                                                {/* Type selector */}
+                                                                <div className="shrink-0 flex items-center gap-1.5">
+                                                                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full border ${typeInfo.color}`}>
+                                                                        {typeInfo.label}
+                                                                    </span>
+                                                                    <select
+                                                                        value={qType}
+                                                                        onChange={(e) => handlePreviewTypeChange(idx, e.target.value)}
+                                                                        className="text-[10px] border border-gray-200 rounded-lg px-1.5 py-1 bg-white text-gray-600 outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer"
+                                                                        title="Đổi loại câu hỏi"
+                                                                    >
+                                                                        {TYPE_OPTIONS.map(opt => (
+                                                                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                                                        ))}
+                                                                    </select>
+                                                                </div>
+                                                            </div>
+                                                            {/* Essay: show placeholder */}
+                                                            {isEssay ? (
+                                                                <div className="text-xs italic text-gray-400 px-2 py-3 bg-white border border-dashed border-gray-200 rounded-lg">
+                                                                    (Câu hỏi tự luận — học sinh sẽ điền câu trả lời khi làm bài)
+                                                                </div>
+                                                            ) : (
+                                                                <div className="grid grid-cols-2 gap-2">
+                                                                    {q.options.map((opt, oi) => {
+                                                                        const isCorrect = qType === 'multiple'
+                                                                            ? Array.isArray(q.correctAnswer) && q.correctAnswer.includes(oi)
+                                                                            : oi === q.correctAnswer;
+                                                                        return (
+                                                                            <div key={oi} className={`text-xs px-3 py-2 rounded-lg border font-medium ${
+                                                                                isCorrect
+                                                                                    ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                                                                                    : 'bg-white border-gray-100 text-gray-600'
+                                                                            }`}>
+                                                                                <span className="font-black mr-1">{String.fromCharCode(65 + oi)}.</span>
+                                                                                {opt ? <RichTextRenderer content={opt} mathDict={mathDictionary} /> : <span className="italic text-gray-300">Trống</span>}
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            )}
                                                         </div>
-                                                    </div>
-                                                ))}
+                                                    );
+                                                })}
                                             </div>
                                             <button onClick={handleConfirmPreview} className="w-full py-4 bg-emerald-600 text-white rounded-xl font-black hover:bg-emerald-700 transition-all shadow-md shadow-emerald-200 flex items-center justify-center gap-2">
                                                 <CheckCircle2 className="w-5 h-5" /> XÁC NHẬN THÊM {previewQuestions.length} CÂU HỎI

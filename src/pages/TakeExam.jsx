@@ -10,7 +10,6 @@ import {
   Clock,
   Send,
   AlertTriangle,
-  Maximize,
   ArrowLeft,
   ArrowRight,
   FileText,
@@ -20,7 +19,32 @@ import {
   ZoomOut,
   CheckCircle,
   ChevronUp,
+  PenLine,
 } from "lucide-react";
+
+// ── Helpers ──────────────────────────────────────────────
+const TYPE_LABELS = {
+  single:     { label: 'Trắc nghiệm', color: 'bg-blue-100 text-blue-700' },
+  multiple:   { label: 'Chọn nhiều',  color: 'bg-purple-100 text-purple-700' },
+  true_false: { label: 'Đúng/Sai',   color: 'bg-amber-100 text-amber-700' },
+  essay:      { label: 'Tự luận',    color: 'bg-emerald-100 text-emerald-700' },
+};
+
+/** Whether a question has been answered (any type) */
+function isAnswered(answer, type) {
+  if (type === 'essay') return typeof answer === 'string' && answer.trim() !== '';
+  if (type === 'multiple') return Array.isArray(answer) && answer.length > 0;
+  return answer !== undefined && answer !== null;
+}
+
+/** Toggle index in a multiple-choice answer array */
+function toggleMultiple(prev, idx) {
+  const arr = Array.isArray(prev) ? [...prev] : [];
+  const pos = arr.indexOf(idx);
+  if (pos >= 0) arr.splice(pos, 1);
+  else arr.push(idx);
+  return arr;
+}
 
 export default function TakeExam() {
   const { examId } = useParams();
@@ -130,7 +154,18 @@ export default function TakeExam() {
     setIsInterrupted(false);
   };
 
-  const handleSelectAnswer = (qi, oi) => setUserAnswers((p) => ({ ...p, [qi]: oi }));
+  const handleSelectAnswer = (qi, oi, type) => {
+    setUserAnswers((p) => {
+      if (type === 'multiple') {
+        return { ...p, [qi]: toggleMultiple(p[qi], oi) };
+      }
+      return { ...p, [qi]: oi };
+    });
+  };
+
+  const handleEssayChange = (qi, text) => {
+    setUserAnswers((p) => ({ ...p, [qi]: text }));
+  };
 
   const toggleFlag = (i) => setFlaggedQuestions((p) => {
     const n = new Set(p); n.has(i) ? n.delete(i) : n.add(i); return n;
@@ -150,25 +185,41 @@ export default function TakeExam() {
     if (timeLeft > 0 && !window.confirm("Bạn có chắc muốn nộp bài?")) return;
     let correct = 0;
     const total = exam.questions.length;
-    exam.questions.forEach((q, i) => { if (userAnswers[i] === q.correctAnswer) correct++; });
-    const score = ((correct / total) * 10).toFixed(2);
+    exam.questions.forEach((q, i) => {
+      const type = q.type || 'single';
+      const ans = userAnswers[i];
+      if (type === 'essay') {
+        // essays are not auto-graded
+      } else if (type === 'multiple') {
+        const ca = Array.isArray(q.correctAnswer) ? [...q.correctAnswer].sort().join(',') : '';
+        const sa = Array.isArray(ans) ? [...ans].sort().join(',') : '';
+        if (ca === sa && ca !== '') correct++;
+      } else {
+        if (ans === q.correctAnswer) correct++;
+      }
+    });
+    // Count gradable (non-essay) questions for score
+    const gradable = exam.questions.filter(q => (q.type || 'single') !== 'essay').length;
+    const score = gradable > 0 ? ((correct / gradable) * 10).toFixed(2) : '0.00';
     try {
       await addDoc(collection(db, "submissions"), {
         examId, examTitle: exam.title, studentId: currentUser.uid,
-        studentName: studentManualName || currentUser.displayName || "Thí sinh ẩn danh", 
+        studentName: studentManualName || currentUser.displayName || "Thí sinh ẩn danh",
         answers: userAnswers,
         score: Number(score), correctCount: correct, totalQuestions: total,
-        cheatCount, examSnapshot: exam.questions, 
+        cheatCount, examSnapshot: exam.questions,
         mathDictionary: exam.mathDictionary || {},
         submittedAt: serverTimestamp(),
       });
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-      alert(`Nộp bài thành công!\nĐiểm: ${score}/10 (${correct}/${total} câu đúng)`);
+      alert(`Nộp bài thành công!\nĐiểm: ${score}/10 (${correct}/${gradable} câu đúng)`);
       navigate("/student");
     } catch (e) { console.error(e); alert("Lỗi khi nộp bài."); }
   };
 
-  const answeredCount = Object.keys(userAnswers).length;
+  const answeredCount = exam?.questions
+    ? exam.questions.filter((q, i) => isAnswered(userAnswers[i], q.type || 'single')).length
+    : 0;
   const totalQ = exam?.questions?.length || 0;
   const limitReached = exam?.attemptLimit > 0 && submissionCount >= exam.attemptLimit;
   const isTimeLow = timeLeft <= 120 && timeLeft > 0;
@@ -349,67 +400,113 @@ export default function TakeExam() {
         {/* LEFT: Scrollable questions */}
         <div className="flex-1 overflow-y-auto bg-gray-100/50">
           <div className="max-w-4xl mx-auto min-h-full bg-white shadow-2xl border-x border-gray-200 py-10">
-            {exam.questions.map((question, qi) => (
-              <div
-                key={qi}
-                id={`q-${qi + 1}`}
-                ref={(el) => (questionRefs.current[qi] = el)}
-                className="rounded-none border-b border-gray-100 scroll-mt-20 px-10 py-10 last:border-0"
-              >
-                {/* Question label + text */}
-                <div className="mb-3">
-                  <p className="text-[13px] font-bold text-gray-900 mb-1">
-                    Câu &nbsp;{qi + 1}
-                  </p>
-                  <div className="text-[13px] text-blue-800 font-medium mb-3" style={{ fontSize: `${fontSize}px` }}>
-                    <RichTextRenderer content={question.content} mathDict={exam?.mathDictionary} />
-                  </div>
-                  {/* Divider label */}
-                  <p className="text-[11px] text-gray-400 text-center mb-3">Chọn một đáp án đúng</p>
-                </div>
+            {exam.questions.map((question, qi) => {
+              const qType = question.type || 'single';
+              const typeInfo = TYPE_LABELS[qType] || TYPE_LABELS.single;
+              const currentAnswer = userAnswers[qi];
 
-                {/* Options */}
-                <div className="space-y-2">
-                  {question.options.map((opt, oi) => (
-                    <div
-                      key={oi}
-                      onClick={() => handleSelectAnswer(qi, oi)}
-                      className={`flex items-center gap-3 px-3 py-2 rounded-lg border cursor-pointer transition-all ${
-                        userAnswers[qi] === oi
-                          ? "border-blue-500 bg-blue-50/60"
-                          : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+              return (
+                <div
+                  key={qi}
+                  id={`q-${qi + 1}`}
+                  ref={(el) => (questionRefs.current[qi] = el)}
+                  className="rounded-none border-b border-gray-100 scroll-mt-20 px-10 py-10 last:border-0"
+                >
+                  {/* Question label + type badge */}
+                  <div className="mb-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <p className="text-[13px] font-bold text-gray-900">Câu&nbsp;{qi + 1}</p>
+                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${typeInfo.color}`}>
+                        {typeInfo.label}
+                      </span>
+                    </div>
+                    <div className="text-[13px] text-blue-800 font-medium mb-3" style={{ fontSize: `${fontSize}px` }}>
+                      <RichTextRenderer content={question.content} mathDict={exam?.mathDictionary} />
+                    </div>
+                    {qType === 'essay' ? (
+                      <p className="text-[11px] text-gray-400 mb-2 flex items-center gap-1">
+                        <PenLine className="w-3 h-3" /> Viết câu trả lời của bạn vào ô bên dưới
+                      </p>
+                    ) : qType === 'multiple' ? (
+                      <p className="text-[11px] text-gray-400 text-center mb-3">Chọn tất cả đáp án đúng (có thể chọn nhiều)</p>
+                    ) : (
+                      <p className="text-[11px] text-gray-400 text-center mb-3">Chọn một đáp án đúng</p>
+                    )}
+                  </div>
+
+                  {/* ── ESSAY ── */}
+                  {qType === 'essay' && (
+                    <textarea
+                      value={typeof currentAnswer === 'string' ? currentAnswer : ''}
+                      onChange={(e) => handleEssayChange(qi, e.target.value)}
+                      rows={5}
+                      placeholder="Nhập câu trả lời của bạn..."
+                      className="w-full px-4 py-3 border border-gray-200 rounded-xl outline-none resize-y focus:ring-2 focus:ring-emerald-400 focus:border-transparent text-gray-800 bg-gray-50 transition-shadow"
+                      style={{ fontSize: `${fontSize}px` }}
+                    />
+                  )}
+
+                  {/* ── SINGLE / TRUE-FALSE / MULTIPLE ── */}
+                  {qType !== 'essay' && (
+                    <div className="space-y-2">
+                      {question.options.filter(o => o !== undefined).map((opt, oi) => {
+                        const isMulti = qType === 'multiple';
+                        const selected = isMulti
+                          ? Array.isArray(currentAnswer) && currentAnswer.includes(oi)
+                          : currentAnswer === oi;
+
+                        return (
+                          <div
+                            key={oi}
+                            onClick={() => handleSelectAnswer(qi, oi, qType)}
+                            className={`flex items-center gap-3 px-3 py-2 rounded-lg border cursor-pointer transition-all ${
+                              selected
+                                ? isMulti
+                                  ? "border-purple-500 bg-purple-50/60"
+                                  : "border-blue-500 bg-blue-50/60"
+                                : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                            }`}
+                          >
+                            {/* Indicator: square for multiple, circle for single/tf */}
+                            {isMulti ? (
+                              <span className={`shrink-0 w-7 h-7 rounded-md flex items-center justify-center text-xs font-bold border-2 transition-colors ${
+                                selected ? "border-purple-500 bg-purple-600 text-white" : "border-gray-300 text-gray-500 bg-white"
+                              }`}>
+                                {selected ? '✓' : String.fromCharCode(65 + oi)}
+                              </span>
+                            ) : (
+                              <span className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-colors ${
+                                selected ? "border-blue-500 bg-blue-600 text-white" : "border-gray-300 text-gray-500 bg-white"
+                              }`}>
+                                {String.fromCharCode(65 + oi)}
+                              </span>
+                            )}
+                            <div className="text-[13px] font-medium text-gray-800" style={{ fontSize: `${fontSize}px` }}>
+                              <RichTextRenderer content={opt} mathDict={exam?.mathDictionary} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Flag button */}
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      onClick={() => toggleFlag(qi)}
+                      className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md transition-colors ${
+                        flaggedQuestions.has(qi)
+                          ? "bg-orange-100 text-orange-600"
+                          : "text-gray-400 hover:text-orange-500 hover:bg-orange-50"
                       }`}
                     >
-                      <span className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-colors ${
-                        userAnswers[qi] === oi
-                          ? "border-blue-500 bg-blue-600 text-white"
-                          : "border-gray-300 text-gray-500 bg-white"
-                      }`}>
-                        {String.fromCharCode(65 + oi)}
-                      </span>
-                      <div className="text-[13px] font-medium text-gray-800" style={{ fontSize: `${fontSize}px` }}>
-                        <RichTextRenderer content={opt} mathDict={exam?.mathDictionary} />
-                      </div>
-                    </div>
-                  ))}
+                      <Flag className="w-3.5 h-3.5" fill={flaggedQuestions.has(qi) ? "currentColor" : "none"} />
+                      {flaggedQuestions.has(qi) ? "Bỏ cờ" : "Đặt cờ"}
+                    </button>
+                  </div>
                 </div>
-
-                {/* Flag button */}
-                <div className="mt-3 flex items-center gap-2">
-                  <button
-                    onClick={() => toggleFlag(qi)}
-                    className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md transition-colors ${
-                      flaggedQuestions.has(qi)
-                        ? "bg-orange-100 text-orange-600"
-                        : "text-gray-400 hover:text-orange-500 hover:bg-orange-50"
-                    }`}
-                  >
-                    <Flag className="w-3.5 h-3.5" fill={flaggedQuestions.has(qi) ? "currentColor" : "none"} />
-                    {flaggedQuestions.has(qi) ? "Bỏ cờ" : "Đặt cờ"}
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
 
 
           </div>
@@ -422,8 +519,8 @@ export default function TakeExam() {
 
             {/* Grid 5 columns */}
             <div className="grid grid-cols-5 gap-1.5">
-              {exam.questions.map((_, idx) => {
-                const answered = userAnswers[idx] !== undefined;
+              {exam.questions.map((q, idx) => {
+                const answered = isAnswered(userAnswers[idx], q.type || 'single');
                 const flagged = flaggedQuestions.has(idx);
                 return (
                   <button

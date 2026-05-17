@@ -2,8 +2,27 @@ import { useState, useEffect } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { db } from "../firebase";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
-import { RefreshCw, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
+import { RefreshCw, AlertTriangle, CheckCircle2, XCircle, PenLine } from "lucide-react";
 import RichTextRenderer from "../components/RichTextRenderer";
+
+const TYPE_LABELS = {
+    single:     { label: 'Trắc nghiệm', color: 'bg-blue-100 text-blue-700' },
+    multiple:   { label: 'Chọn nhiều',  color: 'bg-purple-100 text-purple-700' },
+    true_false: { label: 'Đúng/Sai',   color: 'bg-amber-100 text-amber-700' },
+    essay:      { label: 'Tự luận',    color: 'bg-emerald-100 text-emerald-700' },
+};
+
+/** Check correctness for any question type */
+function checkCorrect(q, studentAns) {
+    const type = q.type || 'single';
+    if (type === 'essay') return null; // not auto-gradable
+    if (type === 'multiple') {
+        const ca = Array.isArray(q.correctAnswer) ? [...q.correctAnswer].sort().join(',') : '';
+        const sa = Array.isArray(studentAns) ? [...studentAns].sort().join(',') : '';
+        return ca === sa && ca !== '';
+    }
+    return studentAns === q.correctAnswer;
+}
 
 export default function ReviewExam() {
     const navigate = useNavigate();
@@ -76,8 +95,9 @@ export default function ReviewExam() {
         .map((q, i) => ({ ...q, originalIndex: i }))
         .filter(q => {
             if (filter === "all") return true;
-            const isCorrect = submission.answers[q.originalIndex] === q.correctAnswer;
-            return filter === "correct" ? isCorrect : !isCorrect;
+            const result = checkCorrect(q, submission.answers[q.originalIndex]);
+            if (result === null) return filter === "all"; // essays only in 'all'
+            return filter === "correct" ? result : !result;
         });
 
     return (
@@ -153,66 +173,108 @@ export default function ReviewExam() {
                         filteredQuestions.map((question) => {
                             const qIndex = question.originalIndex;
                             const studentChoice = submission.answers[qIndex];
-                            const isCorrect = studentChoice === question.correctAnswer;
+                            const qType = question.type || 'single';
+                            const typeInfo = TYPE_LABELS[qType] || TYPE_LABELS.single;
+                            const isEssay = qType === 'essay';
+                            const isMulti = qType === 'multiple';
+                            const result = checkCorrect(question, studentChoice);
+                            // Border/bg by result (essay = neutral)
+                            const cardBorder = result === null
+                                ? 'border-gray-100'
+                                : result ? 'border-emerald-100 shadow-emerald-50/50' : 'border-red-100 shadow-red-50/50';
 
                             return (
-                                <div key={qIndex} className={`bg-white rounded-3xl p-8 shadow-sm border transition-all ${isCorrect ? 'border-emerald-100 shadow-emerald-50/50' : 'border-red-100 shadow-red-50/50'}`}>
+                                <div key={qIndex} className={`bg-white rounded-3xl p-8 shadow-sm border transition-all ${cardBorder}`}>
                                     <div className="flex justify-between items-start mb-6">
-                                        <div className="font-bold text-gray-900 flex items-baseline gap-3 text-lg leading-relaxed">
+                                        <div className="font-bold text-gray-900 flex items-baseline gap-3 text-lg leading-relaxed flex-1 min-w-0">
                                             <span className="shrink-0 text-blue-600 font-black">Câu {qIndex + 1}:</span>
-                                            <div>
+                                            <div className="flex-1">
                                                 <RichTextRenderer content={question.content} mathDict={submission.mathDictionary} />
                                             </div>
                                         </div>
-                                        {isCorrect ? (
-                                            <div className="shrink-0 flex items-center gap-1.5 text-emerald-600 font-black bg-emerald-50 px-3 py-1.5 rounded-full text-[10px] uppercase tracking-wider border border-emerald-100">
-                                                <CheckCircle2 className="w-3.5 h-3.5" /> Đúng
-                                            </div>
-                                        ) : (
-                                            <div className="shrink-0 flex items-center gap-1.5 text-red-600 font-black bg-red-50 px-3 py-1.5 rounded-full text-[10px] uppercase tracking-wider border border-red-100">
-                                                <XCircle className="w-3.5 h-3.5" /> Sai
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    <div className="grid grid-cols-1 gap-3">
-                                        {question.options.map((option, oIndex) => {
-                                            const isAnswered = oIndex === studentChoice;
-                                            const isCorrectOpt = oIndex === question.correctAnswer;
-                                            
-                                            let cardClass = "bg-gray-50 border-gray-100 text-gray-600";
-                                            let circleClass = "border-gray-300 text-gray-400 bg-white";
-
-                                            if (isCorrectOpt) {
-                                                cardClass = "bg-emerald-50 border-emerald-500 text-emerald-900 font-bold ring-1 ring-emerald-500 shadow-sm shadow-emerald-100";
-                                                circleClass = "bg-emerald-500 border-emerald-500 text-white";
-                                            } else if (isAnswered) {
-                                                cardClass = "bg-red-50 border-red-500 text-red-900 font-bold ring-1 ring-red-500 shadow-sm shadow-red-100";
-                                                circleClass = "bg-red-500 border-red-500 text-white";
-                                            }
-
-                                            return (
-                                                <div key={oIndex} className={`flex items-center gap-4 p-4 rounded-2xl border transition-all ${cardClass}`}>
-                                                    <div className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-full border text-xs font-black transition-colors ${circleClass}`}>
-                                                        {String.fromCharCode(65 + oIndex)}
-                                                    </div>
-                                                    <div className="text-sm font-medium">
-                                                        <RichTextRenderer content={option} mathDict={submission.mathDictionary} />
-                                                    </div>
-                                                    {isCorrectOpt && isAnswered && (
-                                                        <span className="ml-auto flex items-center gap-1 text-emerald-600 text-[9px] font-black uppercase tracking-tighter">
-                                                            <CheckCircle2 className="w-3 h-3" /> Chính xác
-                                                        </span>
-                                                    )}
-                                                    {!isCorrectOpt && isAnswered && (
-                                                        <span className="ml-auto flex items-center gap-1 text-red-600 text-[9px] font-black uppercase tracking-tighter">
-                                                            <XCircle className="w-3 h-3" /> Bạn đã chọn
-                                                        </span>
-                                                    )}
+                                        <div className="shrink-0 flex items-center gap-2 ml-3">
+                                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${typeInfo.color}`}>{typeInfo.label}</span>
+                                            {result === null ? (
+                                                <div className="flex items-center gap-1.5 text-gray-500 font-black bg-gray-50 px-3 py-1.5 rounded-full text-[10px] uppercase tracking-wider border border-gray-200">
+                                                    <PenLine className="w-3.5 h-3.5" /> Tự luận
                                                 </div>
-                                            );
-                                        })}
+                                            ) : result ? (
+                                                <div className="flex items-center gap-1.5 text-emerald-600 font-black bg-emerald-50 px-3 py-1.5 rounded-full text-[10px] uppercase tracking-wider border border-emerald-100">
+                                                    <CheckCircle2 className="w-3.5 h-3.5" /> Đúng
+                                                </div>
+                                            ) : (
+                                                <div className="flex items-center gap-1.5 text-red-600 font-black bg-red-50 px-3 py-1.5 rounded-full text-[10px] uppercase tracking-wider border border-red-100">
+                                                    <XCircle className="w-3.5 h-3.5" /> Sai
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
+
+                                    {/* ── ESSAY: show written answer ── */}
+                                    {isEssay && (
+                                        <div className="bg-gray-50 rounded-2xl p-5 border border-dashed border-gray-200">
+                                            <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1">
+                                                <PenLine className="w-3 h-3" /> Câu trả lời của bạn
+                                            </p>
+                                            <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                                                {typeof studentChoice === 'string' && studentChoice.trim()
+                                                    ? studentChoice
+                                                    : <span className="italic text-gray-400">(Không có câu trả lời)</span>
+                                                }
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {/* ── SINGLE / MULTIPLE / TRUE-FALSE: options grid ── */}
+                                    {!isEssay && (
+                                        <div className="grid grid-cols-1 gap-3">
+                                            {question.options.map((option, oIndex) => {
+                                                const isAnswered = isMulti
+                                                    ? Array.isArray(studentChoice) && studentChoice.includes(oIndex)
+                                                    : oIndex === studentChoice;
+                                                const isCorrectOpt = isMulti
+                                                    ? Array.isArray(question.correctAnswer) && question.correctAnswer.includes(oIndex)
+                                                    : oIndex === question.correctAnswer;
+
+                                                let cardClass = "bg-gray-50 border-gray-100 text-gray-600";
+                                                let circleClass = "border-gray-300 text-gray-400 bg-white";
+
+                                                if (isCorrectOpt) {
+                                                    cardClass = "bg-emerald-50 border-emerald-500 text-emerald-900 font-bold ring-1 ring-emerald-500 shadow-sm shadow-emerald-100";
+                                                    circleClass = "bg-emerald-500 border-emerald-500 text-white";
+                                                } else if (isAnswered) {
+                                                    cardClass = "bg-red-50 border-red-500 text-red-900 font-bold ring-1 ring-red-500 shadow-sm shadow-red-100";
+                                                    circleClass = "bg-red-500 border-red-500 text-white";
+                                                }
+
+                                                return (
+                                                    <div key={oIndex} className={`flex items-center gap-4 p-4 rounded-2xl border transition-all ${cardClass}`}>
+                                                        <div className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-${isMulti ? 'md' : 'full'} border text-xs font-black transition-colors ${circleClass}`}>
+                                                            {String.fromCharCode(65 + oIndex)}
+                                                        </div>
+                                                        <div className="text-sm font-medium flex-1">
+                                                            <RichTextRenderer content={option} mathDict={submission.mathDictionary} />
+                                                        </div>
+                                                        {isCorrectOpt && isAnswered && (
+                                                            <span className="ml-auto flex items-center gap-1 text-emerald-600 text-[9px] font-black uppercase tracking-tighter">
+                                                                <CheckCircle2 className="w-3 h-3" /> Chính xác
+                                                            </span>
+                                                        )}
+                                                        {!isCorrectOpt && isAnswered && (
+                                                            <span className="ml-auto flex items-center gap-1 text-red-600 text-[9px] font-black uppercase tracking-tighter">
+                                                                <XCircle className="w-3 h-3" /> Bạn đã chọn
+                                                            </span>
+                                                        )}
+                                                        {isCorrectOpt && !isAnswered && (
+                                                            <span className="ml-auto flex items-center gap-1 text-emerald-600 text-[9px] font-black uppercase tracking-tighter">
+                                                                <CheckCircle2 className="w-3 h-3" /> Đáp án đúng
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
                                 </div>
                             );
                         })
