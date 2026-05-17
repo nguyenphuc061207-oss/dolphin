@@ -21,6 +21,8 @@ import {
   CheckCircle,
   ChevronUp,
   PenLine,
+  LayoutGrid,
+  X,
 } from "lucide-react";
 
 // ── Helpers ──────────────────────────────────────────────
@@ -77,6 +79,7 @@ export default function TakeExam() {
   const [studentManualName, setStudentManualName] = useState(currentUser?.displayName || "");
   const [isInterrupted, setIsInterrupted] = useState(false);
   const [inputPassword, setInputPassword] = useState("");
+  const [isGridOpen, setIsGridOpen] = useState(false);
 
   useDocumentTitle(hasStarted ? "Dolphin | Đang làm bài thi..." : "Dolphin | Chuẩn bị thi");
 
@@ -619,7 +622,7 @@ export default function TakeExam() {
         </div>
 
         {/* RIGHT: Fixed sidebar navigation */}
-        <aside className="shrink-0 w-[260px] bg-white border-l border-gray-200 overflow-y-auto">
+        <aside className="hidden lg:block shrink-0 w-[260px] bg-white border-l border-gray-200 overflow-y-auto">
           <div className="p-4">
             <h3 className="text-sm font-bold text-gray-900 mb-4">Danh sách câu hỏi</h3>
 
@@ -680,6 +683,100 @@ export default function TakeExam() {
 
           </div>
         </aside>
+
+        {/* Mobile Floating Action Button (FAB) */}
+        <button
+          onClick={() => setIsGridOpen(true)}
+          className="fixed bottom-6 right-6 z-40 lg:hidden flex items-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-full shadow-lg transition-all duration-200 hover:scale-105 active:scale-95 font-bold text-sm border border-blue-500/20 shrink-0"
+        >
+          <LayoutGrid className="w-4 h-4" />
+          <span>Danh sách câu ({answeredCount}/{totalQ})</span>
+        </button>
+
+        {/* Mobile Drawer Overlay */}
+        {isGridOpen && (
+          <div
+            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs lg:hidden transition-opacity duration-300"
+            onClick={() => setIsGridOpen(false)}
+          />
+        )}
+
+        {/* Mobile Drawer Panel */}
+        <div
+          className={`fixed top-0 right-0 bottom-0 z-50 w-[280px] bg-white shadow-2xl border-l border-gray-200 transform transition-transform duration-300 ease-in-out lg:hidden flex flex-col ${
+            isGridOpen ? "translate-x-0" : "translate-x-full"
+          }`}
+        >
+          {/* Header with close button */}
+          <div className="flex items-center justify-between p-4 border-b border-gray-100 shrink-0">
+            <h3 className="text-sm font-bold text-gray-900">Danh sách câu hỏi</h3>
+            <button
+              onClick={() => setIsGridOpen(false)}
+              className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Content (Grid) */}
+          <div className="flex-1 overflow-y-auto p-4">
+            <div className="grid grid-cols-5 gap-1.5">
+              {exam.questions.map((q, idx) => {
+                const answered = isAnswered(userAnswers[idx], q.type || 'single');
+                const flagged = flaggedQuestions.has(idx);
+                return (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      scrollToQuestion(idx);
+                      setIsGridOpen(false);
+                    }}
+                    className={`relative w-full aspect-square flex items-center justify-center text-xs font-semibold rounded-md border transition-all hover:scale-105 ${
+                      answered
+                        ? "bg-blue-600 text-white border-blue-700"
+                        : "bg-white text-gray-600 border-gray-300 hover:bg-gray-100"
+                    } ${flagged ? "ring-2 ring-orange-400 ring-offset-1" : ""}`}
+                  >
+                    {String(idx + 1).padStart(2, "0")}
+                    {flagged && (
+                      <Flag className="absolute -top-1 -right-1 w-2.5 h-2.5 text-red-500 fill-red-500" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Legend */}
+            <div className="mt-5 pt-4 border-t border-gray-100 space-y-2">
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <span className="w-4 h-4 rounded border border-blue-700 bg-blue-600 inline-block" />
+                Đã trả lời ({answeredCount})
+              </div>
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <span className="w-4 h-4 rounded border border-gray-300 bg-white inline-block" />
+                Chưa trả lời ({totalQ - answeredCount})
+              </div>
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <span className="w-4 h-4 rounded border border-orange-400 ring-2 ring-orange-300 inline-block" />
+                Đánh cờ ({flaggedQuestions.size})
+              </div>
+            </div>
+
+            {/* Progress */}
+            <div className="mt-4">
+              <div className="flex justify-between text-xs text-gray-400 font-medium mb-1">
+                <span>Tiến độ</span>
+                <span>{totalQ > 0 ? Math.round((answeredCount / totalQ) * 100) : 0}%</span>
+              </div>
+              <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-blue-600 rounded-full transition-all duration-500"
+                  style={{ width: `${totalQ > 0 ? (answeredCount / totalQ) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
