@@ -16,7 +16,7 @@ export default function RichTextRenderer({ content, mathDict = {}, className = '
   
   // The split with capture group returns [text, id, text, id, ...]
   return (
-    <div className={`rich-text-content ${className}`}>
+    <div className={`rich-text-content ${className}`} style={{ whiteSpace: 'pre-wrap' }}>
       {parts.map((part, index) => {
         // Even indices are chunks between tokens, odd indices are token IDs
         if (index % 2 === 0) {

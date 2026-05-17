@@ -214,7 +214,7 @@ export function parseMultiTrueFalseAnswer(text) {
  *     inside a longer sentence does not produce a spurious answer.
  */
 const ANSWER_LINE_REGEX =
-    /^(?:đáp\s*án(?:\s*đúng)?|key|chọn|answer)\s*[:.]?\s*([A-Za-z](?:\s*[,/]\s*[A-Za-z])*)\s*$/i;
+    /^(?:đáp\s*án(?:\s*đúng)?|key|chọn|answer)\s*[:.]?\s*([A-Za-z](?:\s*[,/]\s*[A-Za-z])*)\s*[.]?\s*$/i;
 
 /** Returns a single index, an array of indices, an array of T/F booleans, or -1 if line is not an answer line. */
 function parseAnswerLine(line) {
@@ -417,10 +417,10 @@ export function parseQuestionsFromText(text) {
         // ── Continuation line ──────────────────────────────────────────────────
         if (lastOptionIndex >= 0 && cur.options[lastOptionIndex] !== undefined) {
             // Append to the most recently parsed option
-            cur.options[lastOptionIndex] += ' ' + line;
+            cur.options[lastOptionIndex] += '\n' + line;
         } else if (cur.options.length === 0) {
             // No options collected yet → still building the question stem
-            cur.content += ' ' + line;
+            cur.content += '\n' + line;
         }
     };
 
@@ -431,12 +431,13 @@ export function parseQuestionsFromText(text) {
             const keyword = embeddedMatch[2];
             const after = embeddedMatch[3].trim();
             
-            const isStandardAns = /^[A-Za-z](?:\s*[,/]\s*[A-Za-z])*\s*$/i.test(after);
-            const isMultiTFAns = parseMultiTrueFalseAnswer(after) !== null;
+            const cleanAfter = after.replace(/[.\s]+$/, '');
+            const isStandardAns = /^[A-Za-z](?:\s*[,/]\s*[A-Za-z])*\s*$/i.test(cleanAfter);
+            const isMultiTFAns = parseMultiTrueFalseAnswer(cleanAfter) !== null;
             
             if (isStandardAns || isMultiTFAns) {
                 if (before) processSingleLine(before);
-                processSingleLine(`${keyword}: ${after}`);
+                processSingleLine(`${keyword}: ${cleanAfter}`);
                 continue;
             }
         }
@@ -496,16 +497,17 @@ export function parseQuestionsFromHtml(html) {
             const keyword = embeddedMatch[2];
             const after = embeddedMatch[3].trim();
             
-            const isStandardAns = /^[A-Za-z](?:\s*[,/]\s*[A-Za-z])*\s*$/i.test(after);
-            const isMultiTFAns = parseMultiTrueFalseAnswer(after) !== null;
+            const cleanAfter = after.replace(/[.\s]+$/, '');
+            const isStandardAns = /^[A-Za-z](?:\s*[,/]\s*[A-Za-z])*\s*$/i.test(cleanAfter);
+            const isMultiTFAns = parseMultiTrueFalseAnswer(cleanAfter) !== null;
             
             if (isStandardAns || isMultiTFAns) {
                 if (before) {
                     textLines.push(before);
                     processedHtmlLines.push(rawHtml);
                 }
-                textLines.push(`${keyword}: ${after}`);
-                processedHtmlLines.push(`<p>${keyword}: ${after}</p>`);
+                textLines.push(`${keyword}: ${cleanAfter}`);
+                processedHtmlLines.push(`<p>${keyword}: ${cleanAfter}</p>`);
                 continue;
             }
         }
@@ -566,10 +568,10 @@ export function parseQuestionsFromHtml(html) {
 
         // ── Continuation line ──────────────────────────────────────────────────
         if (lastOptionIndex >= 0 && cur.options[lastOptionIndex] !== undefined) {
-            cur.options[lastOptionIndex] += ' ' + line;
-            cur.optionsHtml[lastOptionIndex] += ' ' + rawHtml;
+            cur.options[lastOptionIndex] += '\n' + line;
+            cur.optionsHtml[lastOptionIndex] += '<br/>' + rawHtml;
         } else if (cur.options.length === 0) {
-            cur.content += ' ' + line;
+            cur.content += '\n' + line;
         }
     }
 
