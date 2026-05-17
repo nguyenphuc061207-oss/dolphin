@@ -1,27 +1,43 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>azota-clone</title>
-    <script>
-      window.MathJax = {
-        tex: {
-          inlineMath: [['$', '$'], ['\\(', '\\)']],
-          displayMath: [['$$', '$$'], ['\\[', '\\]']],
-          processEscapes: true
-        },
-        options: {
-          ignoreHtmlClass: 'tex2jax_ignore',
-          processHtmlClass: 'tex2jax_process'
-        }
-      };
-    </script>
-    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/png" href="/dolphin-logo.png" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dolphin - Hệ thống quản lý thi thông minh</title>
+  <meta name="description" content="Dolphin là nền tảng quản lý và tổ chức thi cử trực tuyến thông minh, tích hợp AI hiện đại dành cho giáo viên và học sinh. Giúp tạo đề thi nhanh chóng, chấm điểm tự động và phân tích kết quả học tập trực quan." />
+  
+  <!-- Open Graph / Facebook / Zalo -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Dolphin - Hệ thống quản lý thi thông minh" />
+  <meta property="og:description" content="Dolphin là nền tảng quản lý và tổ chức thi cử trực tuyến thông minh, tích hợp AI hiện đại dành cho giáo viên và học sinh. Giúp tạo đề thi nhanh chóng, chấm điểm tự động và phân tích kết quả học tập trực quan." />
+  <meta property="og:image" content="/dolphin-logo.png" />
+
+  <!-- Twitter -->
+  <meta property="twitter:card" content="summary_large_image" />
+  <meta property="twitter:title" content="Dolphin - Hệ thống quản lý thi thông minh" />
+  <meta property="twitter:description" content="Dolphin là nền tảng quản lý và tổ chức thi cử trực tuyến thông minh, tích hợp AI hiện đại dành cho giáo viên và học sinh. Giúp tạo đề thi nhanh chóng, chấm điểm tự động và phân tích kết quả học tập trực quan." />
+  <meta property="twitter:image" content="/dolphin-logo.png" />
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']],
+        processEscapes: true
+      },
+      options: {
+        ignoreHtmlClass: 'tex2jax_ignore',
+        processHtmlClass: 'tex2jax_process'
+      }
+    };
+  </script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+
 </html>

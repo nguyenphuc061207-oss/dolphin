@@ -50,9 +50,7 @@ export default function ManageExams() {
             {/* Sidebar - Dolphin Style */}
             <aside className="w-64 border-r border-gray-200 bg-white p-6 hidden lg:flex flex-col sticky top-0 h-screen">
                 <div className="flex items-center gap-3 mb-8">
-                    <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white shadow-lg shadow-blue-200">
-                        <span className="font-bold text-xl">D</span>
-                    </div>
+                    <img src="/dolphin-logo.png" alt="Dolphin Logo" className="w-10 h-10 object-contain" />
                     <h1 className="text-xl font-bold text-gray-900 tracking-tight">Dolphin</h1>
                 </div>
                 <nav className="space-y-1 flex-1">

@@ -5,6 +5,7 @@ import { doc, getDoc, addDoc, collection, serverTimestamp, query, where, getDocs
 import { useAuth } from "../contexts/AuthContext";
 import MathText from "../components/MathText";
 import RichTextRenderer from "../components/RichTextRenderer";
+import useDocumentTitle from "../hooks/useDocumentTitle";
 import {
   Flag,
   Clock,
@@ -76,6 +77,8 @@ export default function TakeExam() {
   const [studentManualName, setStudentManualName] = useState(currentUser?.displayName || "");
   const [isInterrupted, setIsInterrupted] = useState(false);
   const [inputPassword, setInputPassword] = useState("");
+
+  useDocumentTitle(hasStarted ? "Dolphin | Đang làm bài thi..." : "Dolphin | Chuẩn bị thi");
 
   const questionRefs = useRef([]);
 
@@ -302,9 +305,7 @@ export default function TakeExam() {
         <div className="bg-white rounded-2xl shadow-md border border-gray-200 max-w-md w-full overflow-hidden">
           <div className="bg-blue-600 px-6 py-5">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center text-white">
-                <span className="font-bold text-lg">D</span>
-              </div>
+              <img src="/dolphin-logo.png" alt="Dolphin Logo" className="w-10 h-10 object-contain rounded-xl" />
               <div>
                 <h1 className="text-lg font-bold text-white leading-tight">{exam.title}</h1>
                 <p className="text-xs text-blue-200 font-mono mt-0.5">

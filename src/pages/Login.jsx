@@ -1,9 +1,11 @@
 import { signInWithPopup, GoogleAuthProvider } from "firebase/auth";
 import { auth } from "../firebase";
 import { useNavigate } from "react-router-dom";
+import useDocumentTitle from "../hooks/useDocumentTitle";
 
 export default function Login() {
     const navigate = useNavigate();
+    useDocumentTitle("Dolphin | Đăng nhập");
 
     const handleGoogleLogin = async () => {
         const provider = new GoogleAuthProvider();

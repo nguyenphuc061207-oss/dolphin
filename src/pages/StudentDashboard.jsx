@@ -4,10 +4,12 @@ import { collection, query, where, getDocs, doc, getDoc, deleteDoc } from "fireb
 import { useAuth } from "../contexts/AuthContext";
 import { Link, useNavigate } from "react-router-dom";
 import { RefreshCw, Trash2 } from "lucide-react";
+import useDocumentTitle from "../hooks/useDocumentTitle";
 
 export default function StudentDashboard() {
   const { currentUser } = useAuth();
   const navigate = useNavigate();
+  useDocumentTitle("Dolphin | Bảng điều khiển");
   const [submissions, setSubmissions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [examLimits, setExamLimits] = useState({}); // {examId: attemptLimit}
