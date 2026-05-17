@@ -75,6 +75,7 @@ export default function TakeExam() {
   const [fontSize, setFontSize] = useState(15);
   const [studentManualName, setStudentManualName] = useState(currentUser?.displayName || "");
   const [isInterrupted, setIsInterrupted] = useState(false);
+  const [inputPassword, setInputPassword] = useState("");
 
   const questionRefs = useRef([]);
 
@@ -357,6 +358,18 @@ export default function TakeExam() {
                 className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-gray-900"
               />
             </div>
+            {exam?.password && exam.password.trim() !== "" && (
+              <div className="mb-4">
+                <label className="block text-xs font-black text-gray-400 uppercase tracking-wider mb-2">Mật khẩu đề thi</label>
+                <input 
+                  type="password" 
+                  value={inputPassword} 
+                  onChange={(e) => setInputPassword(e.target.value)}
+                  placeholder="Nhập mật khẩu do giáo viên cung cấp..."
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-gray-900"
+                />
+              </div>
+            )}
             {limitReached && (
               <div className="mb-3 text-sm text-red-600 flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4" />
@@ -366,6 +379,17 @@ export default function TakeExam() {
             <button
               onClick={() => { 
                 if (!studentManualName.trim()) return alert("Vui lòng nhập họ tên trước khi bắt đầu!");
+                
+                // Xác thực mật khẩu đề thi
+                if (exam?.password && exam.password.trim() !== "") {
+                  if (!inputPassword.trim()) {
+                    return alert("Vui lòng nhập mật khẩu đề thi!");
+                  }
+                  if (inputPassword.trim() !== exam.password.trim()) {
+                    return alert("Mật khẩu đề thi không chính xác! Vui lòng thử lại.");
+                  }
+                }
+
                 setHasStarted(true); 
                 if (exam?.isAntiCheat) enterFullScreen(); 
               }}
