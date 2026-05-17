@@ -218,6 +218,13 @@ export default function MathText({ text, className = '' }) {
   // 2. Normalize Unicode symbols to LaTeX
   processed = normalizeUnicodeToLatex(processed);
   
+  // Safe Check: If MathJax is loaded on the client-side, let MathJax handle the rendering beautifully!
+  // We return the raw string containing $ and $$ delimiters, which MathJax will typeset.
+  if (typeof window !== 'undefined' && window.MathJax) {
+    return <span className={`math-text ${className}`}>{processed}</span>;
+  }
+  
+  // Fallback to KaTeX (react-katex) if MathJax is not available (e.g. locally or during build)
   // 3. Tokenize and render
   const tokens = tokenizeMath(processed);
 

@@ -148,6 +148,13 @@ export default function TeacherDashboard() {
 
     useEffect(() => { fetchExams(); }, [currentUser]);
 
+    // Safe check and trigger MathJax typesetting when questions or preview list changes
+    useEffect(() => {
+        if (typeof window !== "undefined" && window.MathJax && typeof window.MathJax.typesetPromise === "function") {
+            window.MathJax.typesetPromise().catch((err) => console.warn("MathJax typeset error:", err));
+        }
+    }, [questions, previewQuestions]);
+
     const handleOptionChange = (index, value) => {
         const newOptions = [...options];
         newOptions[index] = value;

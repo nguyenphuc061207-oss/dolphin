@@ -184,6 +184,13 @@ export default function TakeExam() {
     return () => document.removeEventListener("fullscreenchange", h);
   }, []);
 
+  // Safe check and trigger MathJax typesetting when questions or exam screen changes
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.MathJax && typeof window.MathJax.typesetPromise === "function") {
+      window.MathJax.typesetPromise().catch((err) => console.warn("MathJax typeset error:", err));
+    }
+  }, [exam?.questions, hasStarted]);
+
   const handleResume = async () => {
     await enterFullScreen();
     setIsInterrupted(false);
