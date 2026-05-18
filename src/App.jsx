@@ -45,7 +45,7 @@ function Navigation() {
                 </div>
                 <div className="hidden sm:block text-left">
                   <p className="text-xs font-semibold text-gray-900 leading-none">{currentUser.displayName}</p>
-                  <p className="text-[10px] text-gray-500 font-medium uppercase mt-1">{currentUser.role}</p>
+                  <p className="text-[10px] text-gray-500 font-medium uppercase mt-1">Thành viên</p>
                 </div>
               </button>
 
@@ -55,11 +55,18 @@ function Navigation() {
                     <p className="text-xs text-gray-400 font-medium uppercase">Tài khoản</p>
                   </div>
                   <Link
-                    to={currentUser.role === 'teacher' ? '/teacher' : '/student'}
+                    to='/teacher'
                     className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 transition"
                     onClick={() => setIsOpen(false)}
                   >
-                    <LayoutDashboard className="w-4 h-4" /> Bảng điều khiển
+                    <LayoutDashboard className="w-4 h-4" /> Khu vực Giáo viên
+                  </Link>
+                  <Link
+                    to='/student'
+                    className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-emerald-50 transition"
+                    onClick={() => setIsOpen(false)}
+                  >
+                    <LayoutDashboard className="w-4 h-4" /> Khu vực Học sinh
                   </Link>
                   <button
                     onClick={handleLogout}
@@ -196,34 +203,34 @@ function AppContent() {
 
           {/* Teacher Routes */}
           <Route path="/teacher" element={
-            <ProtectedRoute allowedRole="teacher">
+            <ProtectedRoute>
               <TeacherDashboard />
             </ProtectedRoute>
           } />
           <Route path="/teacher/exams" element={
-            <ProtectedRoute allowedRole="teacher">
+            <ProtectedRoute>
               <ManageExams />
             </ProtectedRoute>
           } />
           <Route path="/teacher/exam/:examId/submissions" element={
-            <ProtectedRoute allowedRole="teacher">
+            <ProtectedRoute>
               <ExamSubmissions />
             </ProtectedRoute>
           } />
 
           {/* Student Routes */}
           <Route path="/student" element={
-            <ProtectedRoute allowedRole="student">
+            <ProtectedRoute>
               <StudentDashboard />
             </ProtectedRoute>
           } />
           <Route path="/student/exam/:examId" element={
-            <ProtectedRoute allowedRole="student">
+            <ProtectedRoute>
               <TakeExam />
             </ProtectedRoute>
           } />
           <Route path="/student/review/:submissionId" element={
-            <ProtectedRoute allowedRole="student">
+            <ProtectedRoute>
               <ReviewExam />
             </ProtectedRoute>
           } />
