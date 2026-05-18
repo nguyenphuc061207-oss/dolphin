@@ -85,7 +85,7 @@ export default function ExamSubmissions() {
         if (submissions.length === 0) return alert("Không có dữ liệu để xuất!");
 
         // 1. Định nghĩa tiêu đề các cột (Header)
-        const headers = ["Hang", "Ten Hoc Sinh", "Lan Thi", "Diem So", "So Cau Dung", "Tong So Cau"];
+        const headers = ["Hang", "ID Dinh Danh", "Ten Hoc Sinh", "Lan Thi", "Diem So", "So Cau Dung", "Tong So Cau"];
         if (exam?.isAntiCheat) {
             headers.push("Giam Sat");
         }
@@ -97,6 +97,7 @@ export default function ExamSubmissions() {
             
             const rowData = [
                 index + 1,
+                `"${sub.shortId || "N/A"}"`,
                 `"${sub.studentName}"`, // Bọc trong dấu ngoặc kép để tránh lỗi nếu tên có dấu phẩy
                 getAttemptNumber(sub, submissions),
                 sub.score,
@@ -185,7 +186,9 @@ export default function ExamSubmissions() {
                             {submissions.map((sub, index) => (
                                 <tr key={sub.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
                                     <td className="p-4 font-bold text-gray-500">#{index + 1}</td>
-                                    <td className="p-4 font-semibold text-gray-800">{sub.studentName}</td>
+                                    <td className="p-4 font-semibold text-gray-800">
+                                        {sub.studentName} {sub.shortId && <span className="text-gray-400 font-normal ml-1 text-sm">#{sub.shortId}</span>}
+                                    </td>
                                     <td className="p-4 text-gray-600 font-medium">
                                         Lần {getAttemptNumber(sub, submissions)}
                                     </td>

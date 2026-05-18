@@ -23,6 +23,7 @@ import {
   PenLine,
   LayoutGrid,
   X,
+  Shield,
 } from "lucide-react";
 
 // ── Helpers ──────────────────────────────────────────────
@@ -275,6 +276,7 @@ export default function TakeExam() {
       await addDoc(collection(db, "submissions"), {
         examId, examTitle: exam.title, studentId: currentUser.uid,
         studentName: studentManualName || currentUser.displayName || "Thí sinh ẩn danh",
+        shortId: currentUser.shortId || "N/A",
         answers: userAnswers,
         score: Number(score), correctCount: correct, totalQuestions: total,
         cheatCount, examSnapshot: exam.questions,
@@ -301,6 +303,13 @@ export default function TakeExam() {
     </div>
   );
   if (!exam) return null;
+
+  const isRestricted = exam.accessType === 'restricted';
+  const isAllowed = !isRestricted || (exam.allowedUsers && exam.allowedUsers.some(
+    u => u.shortId === currentUser?.shortId && 
+    (u.name.toLowerCase().trim() === currentUser?.displayName?.toLowerCase().trim() ||
+     u.name.toLowerCase().trim() === studentManualName?.toLowerCase().trim())
+  ));
 
   // ── PHASE 1: Lobby ──────────────────────────────────────────────────
   if (!hasStarted) {
@@ -353,6 +362,20 @@ export default function TakeExam() {
             )}
           </div>
           <div className="px-6 pb-6">
+            {isRestricted && (
+              <div className={`p-4 rounded-xl border ${isAllowed ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'} mb-4`}>
+                <p className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 mb-1">
+                  <Shield className="w-4 h-4 shrink-0" /> Chế độ truy cập: Hạn chế
+                </p>
+                {isAllowed ? (
+                  <p className="text-[11px] font-medium">Bạn đã được cấp quyền làm đề thi này. Hãy kiểm tra hoặc nhập đúng Họ và tên của bạn bên dưới.</p>
+                ) : (
+                  <p className="text-[11px] font-medium">
+                    Bạn <b>chưa có tên</b> trong danh sách học sinh được phép tham gia. Vui lòng nhập đúng Họ và tên (ví dụ: trùng với tên kết bạn) hoặc liên hệ Giáo viên để được cấp quyền với mã định danh <b>#{currentUser?.shortId}</b>.
+                  </p>
+                )}
+              </div>
+            )}
             <div className="mb-4">
               <label className="block text-xs font-black text-gray-400 uppercase tracking-wider mb-2">Họ và tên của bạn</label>
               <input 
@@ -385,6 +408,10 @@ export default function TakeExam() {
               onClick={() => { 
                 if (!studentManualName.trim()) return alert("Vui lòng nhập họ tên trước khi bắt đầu!");
                 
+                if (isRestricted && !isAllowed) {
+                  return alert("Bạn không có quyền tham gia đề thi này. Vui lòng nhập đúng họ tên hoặc liên hệ giáo viên!");
+                }
+
                 // Xác thực mật khẩu đề thi
                 if (exam?.password && exam.password.trim() !== "") {
                   if (!inputPassword.trim()) {
@@ -398,10 +425,10 @@ export default function TakeExam() {
                 setHasStarted(true); 
                 if (exam?.isAntiCheat) enterFullScreen(); 
               }}
-              disabled={limitReached}
-              className={`w-full py-3.5 ${limitReached ? "bg-gray-400 cursor-not-allowed" : "bg-orange-500 hover:bg-orange-600 active:bg-orange-700"} text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2 shadow-md`}
+              disabled={limitReached || (isRestricted && !isAllowed)}
+              className={`w-full py-3.5 ${limitReached || (isRestricted && !isAllowed) ? "bg-gray-400 cursor-not-allowed" : "bg-orange-500 hover:bg-orange-600 active:bg-orange-700"} text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2 shadow-md`}
             >
-              {limitReached ? "Đã hết lượt làm bài" : "Bắt đầu thi"} <ArrowRight className="w-5 h-5" />
+              {limitReached ? "Đã hết lượt làm bài" : isRestricted && !isAllowed ? "Bị hạn chế truy cập" : "Bắt đầu thi"} <ArrowRight className="w-5 h-5" />
             </button>
           </div>
         </div>

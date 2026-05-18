@@ -3,10 +3,10 @@ import { BrowserRouter, Routes, Route, Link, useLocation } from "react-router-do
 import { signOut } from "firebase/auth";
 import { auth } from "./firebase";
 import { useAuth } from "./contexts/AuthContext";
-import { BookOpen, Users, ArrowRight, LogOut, LayoutDashboard } from 'lucide-react';
+import { BookOpen, Users, ArrowRight, LogOut, LayoutDashboard, UserPlus } from 'lucide-react';
 import useDocumentTitle from "./hooks/useDocumentTitle";
 
-// Import Pages
+import Friends from "./pages/Friends";
 import Login from "./pages/Login";
 import ProtectedRoute from "./components/ProtectedRoute";
 import TeacherDashboard from "./pages/TeacherDashboard";
@@ -44,7 +44,9 @@ function Navigation() {
                   {currentUser.displayName?.charAt(0)}
                 </div>
                 <div className="hidden sm:block text-left">
-                  <p className="text-xs font-semibold text-gray-900 leading-none">{currentUser.displayName}</p>
+                  <p className="text-xs font-semibold text-gray-900 leading-none">
+                    {currentUser.displayName} <span className="text-gray-400 font-normal">#{currentUser.shortId}</span>
+                  </p>
                   <p className="text-[10px] text-gray-500 font-medium uppercase mt-1">Thành viên</p>
                 </div>
               </button>
@@ -59,14 +61,21 @@ function Navigation() {
                     className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 transition"
                     onClick={() => setIsOpen(false)}
                   >
-                    <LayoutDashboard className="w-4 h-4" /> Khu vực Giáo viên
+                    <BookOpen className="w-4 h-4" /> Khu Giáo viên
                   </Link>
                   <Link
                     to='/student'
                     className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-emerald-50 transition"
                     onClick={() => setIsOpen(false)}
                   >
-                    <LayoutDashboard className="w-4 h-4" /> Khu vực Học sinh
+                    <Users className="w-4 h-4" /> Khu học sinh
+                  </Link>
+                  <Link
+                    to='/friends'
+                    className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-indigo-50 transition"
+                    onClick={() => setIsOpen(false)}
+                  >
+                    <UserPlus className="w-4 h-4" /> Bạn bè
                   </Link>
                   <button
                     onClick={handleLogout}
@@ -232,6 +241,13 @@ function AppContent() {
           <Route path="/student/review/:submissionId" element={
             <ProtectedRoute>
               <ReviewExam />
+            </ProtectedRoute>
+          } />
+
+          {/* Friends Route */}
+          <Route path="/friends" element={
+            <ProtectedRoute>
+              <Friends />
             </ProtectedRoute>
           } />
         </Routes>

@@ -27,12 +27,20 @@ export const AuthProvider = ({ children }) => {
 
                 // Nếu user chưa tồn tại trong Database, tiến hành tạo mới
                 if (!userSnap.exists()) {
+                    userData.shortId = Math.floor(1000 + Math.random() * 9000).toString();
                     userData.role = "student"; // Mặc định gán quyền là học sinh
                     userData.createdAt = new Date();
                     await setDoc(userRef, userData);
                 } else {
-                    // Nếu đã có, lấy role hiện tại từ Database
-                    userData.role = userSnap.data().role;
+                    const data = userSnap.data();
+                    // Nếu đã có, lấy thông tin hiện tại từ Database
+                    userData.role = data.role;
+                    if (data.shortId) {
+                        userData.shortId = data.shortId;
+                    } else {
+                        userData.shortId = Math.floor(1000 + Math.random() * 9000).toString();
+                        await setDoc(userRef, { shortId: userData.shortId }, { merge: true });
+                    }
                 }
 
                 setCurrentUser(userData);

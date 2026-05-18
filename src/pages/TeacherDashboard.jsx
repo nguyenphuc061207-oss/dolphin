@@ -109,6 +109,19 @@ export default function TeacherDashboard() {
     const [shuffleOptions, setShuffleOptions] = useState(false);
     const [attemptLimit, setAttemptLimit] = useState(0);
 
+    // --- QUẢN LÝ QUYỀN TRUY CẬP ---
+    const [accessType, setAccessType] = useState('public'); // 'public' | 'restricted'
+    const [allowedUsers, setAllowedUsers] = useState([]); // array of { name, shortId }
+    const [friendsList, setFriendsList] = useState([]);
+    const [selectedFriendId, setSelectedFriendId] = useState('');
+    const [manualAllowedName, setManualAllowedName] = useState('');
+    const [manualAllowedId, setManualAllowedId] = useState('');
+
+    // --- QUẢN LÝ THÔNG BÁO ---
+    const [notifications, setNotifications] = useState([]);
+    const [unreadCount, setUnreadCount] = useState(0);
+    const [showNotifications, setShowNotifications] = useState(false);
+
     // --- SOẠN THẢO CÂU HỎI ---
     const [currentQText, setCurrentQText] = useState("");
     const [manualType, setManualType] = useState("single");
@@ -149,6 +162,121 @@ export default function TeacherDashboard() {
     };
 
     useEffect(() => { fetchExams(); }, [currentUser]);
+
+    // Fetch danh sách bạn bè để quản lý quyền truy cập
+    useEffect(() => {
+        if (!currentUser) return;
+        const fetchFriends = async () => {
+            try {
+                const q = query(collection(db, "friendships"), where("userId", "==", currentUser.uid));
+                const snap = await getDocs(q);
+                const list = [];
+                snap.forEach((docSnap) => {
+                    list.push({ id: docSnap.id, ...docSnap.data() });
+                });
+                setFriendsList(list);
+            } catch (err) {
+                console.error("Lỗi fetch bạn bè:", err);
+            }
+        };
+        fetchFriends();
+    }, [currentUser]);
+
+    // Fetch thông báo nộp bài cho giáo viên
+    const fetchNotifications = async () => {
+        if (!currentUser) return;
+        try {
+            const examsQ = query(collection(db, "exams"), where("teacherId", "==", currentUser.uid));
+            const examsSnap = await getDocs(examsQ);
+            const myExamIds = [];
+            examsSnap.forEach((doc) => {
+                myExamIds.push(doc.id);
+            });
+
+            if (myExamIds.length === 0) {
+                setNotifications([]);
+                setUnreadCount(0);
+                return;
+            }
+
+            const limitExamIds = myExamIds.slice(0, 30);
+            const subQ = query(
+                collection(db, "submissions"),
+                where("examId", "in", limitExamIds)
+            );
+            const subSnap = await getDocs(subQ);
+            const list = [];
+            subSnap.forEach((docSnap) => {
+                const data = docSnap.data();
+                list.push({
+                    id: docSnap.id,
+                    ...data,
+                });
+            });
+
+            list.sort((a, b) => {
+                const aTime = a.submittedAt?.toMillis ? a.submittedAt.toMillis() : new Date(a.submittedAt).getTime();
+                const bTime = b.submittedAt?.toMillis ? b.submittedAt.toMillis() : new Date(b.submittedAt).getTime();
+                return bTime - aTime;
+            });
+
+            setNotifications(list.slice(0, 10));
+            
+            const lastSeenTime = localStorage.getItem(`notifications_last_seen_${currentUser.uid}`) || 0;
+            const unread = list.filter(item => {
+                const itemTime = item.submittedAt?.toMillis ? item.submittedAt.toMillis() : new Date(item.submittedAt).getTime();
+                return itemTime > Number(lastSeenTime);
+            }).length;
+            
+            setUnreadCount(unread);
+        } catch (err) {
+            console.error("Lỗi fetch thông báo:", err);
+        }
+    };
+
+    useEffect(() => {
+        fetchNotifications();
+    }, [currentUser]);
+
+    const handleToggleNotifications = () => {
+        setShowNotifications(!showNotifications);
+        if (!showNotifications) {
+            setUnreadCount(0);
+            localStorage.setItem(`notifications_last_seen_${currentUser.uid}`, Date.now().toString());
+        }
+    };
+
+    const handleAddFriendToAllowed = () => {
+        if (!selectedFriendId) return alert("Vui lòng chọn một người bạn.");
+        const friend = friendsList.find(f => f.id === selectedFriendId);
+        if (!friend) return;
+        
+        const exists = allowedUsers.some(u => u.shortId === friend.friendShortId && u.name.toLowerCase() === friend.friendName.toLowerCase());
+        if (exists) return alert("Học sinh này đã có trong danh sách được cho phép.");
+        
+        setAllowedUsers([...allowedUsers, { name: friend.friendName, shortId: friend.friendShortId }]);
+        setSelectedFriendId('');
+    };
+
+    const handleAddManualToAllowed = () => {
+        if (!manualAllowedName.trim() || !manualAllowedId.trim()) {
+            return alert("Vui lòng nhập đầy đủ họ tên và ID định danh.");
+        }
+        if (manualAllowedId.trim().length !== 4 || isNaN(manualAllowedId.trim())) {
+            return alert("ID định danh phải là mã 4 chữ số.");
+        }
+        
+        const exists = allowedUsers.some(u => u.shortId === manualAllowedId.trim() && u.name.toLowerCase() === manualAllowedName.trim().toLowerCase());
+        if (exists) return alert("Học sinh này đã có trong danh sách được cho phép.");
+        
+        setAllowedUsers([...allowedUsers, { name: manualAllowedName.trim(), shortId: manualAllowedId.trim() }]);
+        setManualAllowedName('');
+        setManualAllowedId('');
+    };
+
+    const handleRemoveFromAllowed = (idx) => {
+        setAllowedUsers(allowedUsers.filter((_, i) => i !== idx));
+    };
 
     // Safe check and trigger MathJax typesetting when questions or preview list changes
     useEffect(() => {
@@ -1077,11 +1205,15 @@ const handleSaveExam = async () => {
             shuffleOptions,
             attemptLimit: Number(attemptLimit),
             mathDictionary: mathDictionary || {},
+            accessType,
+            allowedUsers: accessType === 'restricted' ? allowedUsers : [],
             createdAt: serverTimestamp()
         });
         alert("Xuất bản đề thi thành công!");
         setExamTitle(""); setQuestions([]); setExamPassword('');
         setStartDate(''); setEndDate('');
+        setAccessType('public');
+        setAllowedUsers([]);
         fetchExams();
     } catch (error) { console.error(error); }
     finally { setIsSubmitting(false); }
@@ -1108,13 +1240,85 @@ return (
         {/* Main Area */}
         <div className="flex-1 flex flex-col min-w-0">
             <header className="border-b border-gray-200 bg-white sticky top-0 z-40 px-8 py-4 flex justify-between items-center">
-                <div className="flex-1 max-w-md relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                    <input type="text" placeholder="Tìm kiếm đề thi..." className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500" />
+                {/* Responsive spacing left */}
+                <div className="flex items-center gap-2">
+                    <img src="/dolphin-logo.png" alt="Dolphin" className="w-8 h-8 lg:hidden object-contain" />
+                    <span className="font-bold text-gray-800 lg:hidden">Dolphin</span>
                 </div>
-                <button className="w-10 h-10 rounded-full hover:bg-gray-50 flex items-center justify-center border border-gray-100">
-                    <Bell className="w-5 h-5 text-gray-600" />
-                </button>
+
+                <div className="relative">
+                    <button 
+                        onClick={handleToggleNotifications}
+                        className="w-10 h-10 rounded-full hover:bg-gray-50 flex items-center justify-center border border-gray-100 relative cursor-pointer"
+                    >
+                        <Bell className="w-5 h-5 text-gray-600" />
+                        {unreadCount > 0 && (
+                            <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center border-2 border-white animate-pulse">
+                                {unreadCount}
+                            </span>
+                        )}
+                    </button>
+
+                    {showNotifications && (
+                        <div className="absolute right-0 mt-3 w-80 bg-white rounded-2xl border border-gray-200 shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-3 duration-200">
+                            <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+                                <span className="font-extrabold text-sm text-gray-800 flex items-center gap-1.5">
+                                    <Bell className="w-4 h-4 text-blue-600" /> Thông báo gần đây
+                                </span>
+                                {unreadCount > 0 && (
+                                    <button 
+                                        onClick={() => {
+                                            setUnreadCount(0);
+                                            localStorage.setItem(`notifications_last_seen_${currentUser.uid}`, Date.now().toString());
+                                        }}
+                                        className="text-[10px] font-bold text-blue-600 hover:underline cursor-pointer"
+                                    >
+                                        Đánh dấu đã đọc
+                                    </button>
+                                )}
+                            </div>
+                            <div className="max-h-80 overflow-y-auto divide-y divide-gray-100">
+                                {notifications.length === 0 ? (
+                                    <div className="p-8 text-center text-gray-400 text-xs">
+                                        <p className="font-medium">Chưa có thông báo nào.</p>
+                                        <p className="text-[10px] text-gray-400 mt-0.5">Khi có học sinh nộp bài thi, thông báo sẽ xuất hiện ở đây.</p>
+                                    </div>
+                                ) : (
+                                    notifications.map((notif) => {
+                                        const notifTime = notif.submittedAt?.toDate 
+                                            ? notif.submittedAt.toDate().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+                                            : new Date(notif.submittedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+                                        
+                                        const notifDate = notif.submittedAt?.toDate
+                                            ? notif.submittedAt.toDate().toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })
+                                            : new Date(notif.submittedAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+
+                                        return (
+                                            <div key={notif.id} className="p-4 hover:bg-blue-50/30 transition-colors text-xs text-gray-600 text-left">
+                                                <p className="leading-relaxed">
+                                                    Học sinh <span className="font-extrabold text-gray-900">{notif.studentName}</span> đã nộp bài thi <span className="font-bold text-blue-600">{notif.examTitle}</span>.
+                                                </p>
+                                                <div className="flex items-center justify-between mt-2 text-[10px] font-bold text-gray-400">
+                                                    <span>Điểm số: <span className="text-emerald-600 font-extrabold">{notif.score}/10</span></span>
+                                                    <span>{notifTime} - {notifDate}</span>
+                                                </div>
+                                            </div>
+                                        );
+                                    })
+                                )}
+                            </div>
+                            <div className="p-3 border-t border-gray-100 bg-gray-50/50 text-center">
+                                <Link 
+                                    to="/teacher/exams" 
+                                    onClick={() => setShowNotifications(false)}
+                                    className="text-[11px] font-extrabold text-gray-500 hover:text-blue-600 transition-colors uppercase tracking-tight"
+                                >
+                                    Quản lý đề thi của tôi
+                                </Link>
+                            </div>
+                        </div>
+                    )}
+                </div>
             </header>
 
             <main className="p-8 w-full max-w-7xl mx-auto">
@@ -1508,9 +1712,106 @@ return (
                                 {/* NHÓM 2: BẢO MẬT */}
                                 <div className="p-5 bg-gray-50/70 rounded-xl border border-gray-100">
                                     <h4 className="text-xs font-black text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-                                        <Shield className="w-4 h-4" /> Bảo mật
+                                        <Shield className="w-4 h-4" /> Bảo mật & Quyền truy cập
                                     </h4>
-                                    <div className="space-y-3">
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-semibold text-gray-700 mb-1.5">Quyền truy cập đề thi</label>
+                                            <select
+                                                value={accessType}
+                                                onChange={(e) => setAccessType(e.target.value)}
+                                                className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow text-sm font-medium cursor-pointer"
+                                            >
+                                                <option value="public">Bất kỳ ai có đường liên kết</option>
+                                                <option value="restricted">Hạn chế (Chỉ học sinh được chỉ định)</option>
+                                            </select>
+                                        </div>
+
+                                        {accessType === 'restricted' && (
+                                            <div className="p-4 bg-white rounded-xl border border-gray-200 space-y-4">
+                                                <p className="text-xs font-bold text-gray-500 uppercase">Danh sách học sinh được phép làm bài:</p>
+                                                
+                                                {/* Add from friends list */}
+                                                <div className="space-y-2">
+                                                    <label className="block text-xs font-semibold text-gray-600">Thêm từ bạn bè có sẵn:</label>
+                                                    <div className="flex gap-2">
+                                                        <select
+                                                            value={selectedFriendId}
+                                                            onChange={(e) => setSelectedFriendId(e.target.value)}
+                                                            className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                                                        >
+                                                            <option value="">-- Chọn bạn bè --</option>
+                                                            {friendsList.map(friend => (
+                                                                <option key={friend.id} value={friend.id}>
+                                                                    {friend.friendName} #{friend.friendShortId}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                        <button
+                                                            type="button"
+                                                            onClick={handleAddFriendToAllowed}
+                                                            className="px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition"
+                                                        >
+                                                            Thêm
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                {/* Add manually by name and ID */}
+                                                <div className="space-y-2 pt-2 border-t border-gray-100">
+                                                    <label className="block text-xs font-semibold text-gray-600">Nhập thủ công học sinh khác:</label>
+                                                    <div className="grid grid-cols-2 gap-2">
+                                                        <input
+                                                            type="text"
+                                                            placeholder="Tên học sinh"
+                                                            value={manualAllowedName}
+                                                            onChange={(e) => setManualAllowedName(e.target.value)}
+                                                            className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500"
+                                                        />
+                                                        <input
+                                                            type="text"
+                                                            placeholder="ID (4 chữ số)"
+                                                            maxLength={4}
+                                                            value={manualAllowedId}
+                                                            onChange={(e) => setManualAllowedId(e.target.value)}
+                                                            className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500"
+                                                        />
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleAddManualToAllowed}
+                                                        className="w-full mt-1 py-2 bg-gray-900 text-white rounded-lg text-xs font-bold hover:bg-black transition"
+                                                    >
+                                                        Thêm học sinh thủ công
+                                                    </button>
+                                                </div>
+
+                                                {/* Display allowed list */}
+                                                <div className="pt-2 border-t border-gray-100">
+                                                    <p className="text-[10px] font-black text-gray-400 uppercase mb-2">Đã thêm ({allowedUsers.length}):</p>
+                                                    {allowedUsers.length === 0 ? (
+                                                        <p className="text-[11px] text-gray-400 italic">Chưa có học sinh nào được chỉ định. Đề thi sẽ không thể làm bởi bất kì ai.</p>
+                                                    ) : (
+                                                        <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                                                            {allowedUsers.map((user, idx) => (
+                                                                <div key={idx} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg border border-gray-100 text-xs">
+                                                                    <span className="font-semibold text-gray-700">{user.name} <span className="text-gray-400">#{user.shortId}</span></span>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleRemoveFromAllowed(idx)}
+                                                                        className="p-1 text-red-500 hover:bg-red-50 rounded"
+                                                                        title="Xóa khỏi danh sách"
+                                                                    >
+                                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                                    </button>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+
                                         <div>
                                             <label className="block text-sm font-semibold text-gray-700 mb-1.5">Mật khẩu đề thi</label>
                                             <div className="relative">
