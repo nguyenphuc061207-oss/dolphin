@@ -7,6 +7,7 @@ import { BookOpen, Users, ArrowRight, LogOut, LayoutDashboard, UserPlus } from '
 import useDocumentTitle from "./hooks/useDocumentTitle";
 
 import Friends from "./pages/Friends";
+import FriendsDemo from "./pages/FriendsDemo";
 import Login from "./pages/Login";
 import ProtectedRoute from "./components/ProtectedRoute";
 import TeacherDashboard from "./pages/TeacherDashboard";
@@ -250,6 +251,9 @@ function AppContent() {
               <Friends />
             </ProtectedRoute>
           } />
+
+          {/* Friends Demo (Public) */}
+          <Route path="/friends-demo" element={<FriendsDemo />} />
         </Routes>
       </main>
     </div>

@@ -1,95 +1,54 @@
-import { useState, useEffect } from "react";
-import { db } from "../firebase";
-import { collection, query, where, getDocs, addDoc, deleteDoc, doc } from "firebase/firestore";
-import { useAuth } from "../contexts/AuthContext";
+import { useState } from "react";
 import { Copy, UserPlus, Trash2, Users } from "lucide-react";
 
-export default function Friends() {
-  const { currentUser } = useAuth();
-  const [friends, setFriends] = useState([]);
+export default function FriendsDemo() {
+  const [friends, setFriends] = useState([
+    {
+      id: "1",
+      friendName: "Nguyễn Văn A",
+      friendShortId: "1234",
+    },
+    {
+      id: "2",
+      friendName: "Trần Thị B",
+      friendShortId: "5678",
+    },
+    {
+      id: "3",
+      friendName: "Lê Minh C",
+      friendShortId: "9012",
+    },
+  ]);
+
   const [searchName, setSearchName] = useState("");
   const [searchId, setSearchId] = useState("");
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(null);
 
-  // Load friends list
-  useEffect(() => {
-    if (!currentUser) return;
-    const fetchFriends = async () => {
-      const q = query(collection(db, "friendships"), where("userId", "==", currentUser.uid));
-      const snap = await getDocs(q);
-      const list = [];
-      snap.forEach((docSnap) => {
-        list.push({ id: docSnap.id, ...docSnap.data() });
-      });
-      setFriends(list);
-    };
-    fetchFriends();
-  }, [currentUser]);
-
   const handleAddFriend = async () => {
     if (!searchName.trim() || !searchId.trim()) {
-      return alert("Vui lòng nhập tên và ID của bạn bè.");
+      alert("Vui lòng nhập tên và ID của bạn bè.");
+      return;
     }
     setLoading(true);
-    try {
-      // Tìm người dùng trong collection "users"
-      const q = query(
-        collection(db, "users"),
-        where("shortId", "==", searchId.trim()),
-        where("displayName", "==", searchName.trim())
-      );
-      const snap = await getDocs(q);
-      if (snap.empty) {
-        alert("Không tìm thấy người dùng với tên và ID đã nhập.");
-        setLoading(false);
-        return;
-      }
-      const userDoc = snap.docs[0];
-      const friendUid = userDoc.id;
-      // Kiểm tra đã có bạn bè chưa
-      const existing = friends.find((f) => f.friendId === friendUid);
-      if (existing) {
-        alert("Bạn đã là bạn bè với người này.");
-        setLoading(false);
-        return;
-      }
-      await addDoc(collection(db, "friendships"), {
-        userId: currentUser.uid,
-        friendId: friendUid,
-        friendName: userDoc.data().displayName,
-        friendShortId: userDoc.data().shortId,
-        createdAt: new Date()
-      });
-      // Refresh list
+    setTimeout(() => {
       setFriends((prev) => [
         ...prev,
         {
-          userId: currentUser.uid,
-          friendId: friendUid,
-          friendName: userDoc.data().displayName,
-          friendShortId: userDoc.data().shortId,
-          id: "temp-" + Date.now()
-        }
+          id: "temp-" + Date.now(),
+          friendName: searchName,
+          friendShortId: searchId,
+        },
       ]);
       setSearchName("");
       setSearchId("");
-    } catch (e) {
-      console.error(e);
-      alert("Lỗi khi thêm bạn bè.");
-    }
-    setLoading(false);
+      setLoading(false);
+    }, 500);
   };
 
   const handleRemoveFriend = async (docId) => {
     if (!window.confirm("Bạn có chắc muốn xóa bạn bè này?")) return;
-    try {
-      await deleteDoc(doc(db, "friendships", docId));
-      setFriends((prev) => prev.filter((f) => f.id !== docId));
-    } catch (e) {
-      console.error(e);
-      alert("Xóa bạn bè thất bại.");
-    }
+    setFriends((prev) => prev.filter((f) => f.id !== docId));
   };
 
   const copyToClipboard = async (text, id) => {
