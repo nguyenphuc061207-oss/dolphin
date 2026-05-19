@@ -360,12 +360,7 @@ export default function TeacherDashboard() {
         setIsSavingAccess(false);
     };
 
-    // Safe check and trigger MathJax typesetting when questions or preview list changes
-    useEffect(() => {
-        if (typeof window !== "undefined" && window.MathJax && typeof window.MathJax.typesetPromise === "function") {
-            window.MathJax.typesetPromise().catch((err) => console.warn("MathJax typeset error:", err));
-        }
-    }, [questions, previewQuestions]);
+    // Math rendering is now handled by KaTeX via the MathText component
 
     const handleOptionChange = (index, value) => {
         const newOptions = [...options];
@@ -659,9 +654,56 @@ export default function TeacherDashboard() {
         /**
          * Chuyển một chuỗi Unicode thành LaTeX bằng cách thay thế từng ký tự.
          * Ký tự không có trong map thì giữ nguyên.
+         *
+         * v4 fix: Thêm khoảng trắng sau các lệnh LaTeX nhiều ký tự (ví dụ: \forall, \alpha)
+         * để tránh dính với ký tự tiếp theo (\forallx → \forall x).
          */
-        const applySymbolMap = (str) =>
-            [...str].map((ch) => SYMBOL_MAP[ch] ?? ch).join('');
+        const applySymbolMap = (str) => {
+            const result = [];
+            const chars = [...str];
+            for (let i = 0; i < chars.length; i++) {
+                const ch = chars[i];
+                const replacement = SYMBOL_MAP[ch];
+                if (replacement) {
+                    // Nếu lệnh LaTeX bắt đầu bằng \ và ký tự tiếp theo là chữ cái,
+                    // thêm khoảng trắng để tránh dính lệnh (e.g. \forallx → \forall x)
+                    result.push(replacement);
+                    if (replacement.startsWith('\\') && /^\\[a-zA-Z]/.test(replacement)) {
+                        const next = chars[i + 1];
+                        if (next && /[a-zA-Z]/.test(next)) {
+                            result.push(' ');
+                        }
+                    }
+                } else {
+                    result.push(ch);
+                }
+            }
+            return result.join('');
+        };
+
+        /**
+         * Xử lý text run có style 'p' (plain/roman text).
+         * Tách riêng phần text thường và ký hiệu toán học để tránh
+         * unicode bị giấu trong \text{} (ví dụ: \text{∈} → broken).
+         */
+        const wrapPlainText = (raw) => {
+            // Tách chuỗi thành các đoạn: ký hiệu toán (cần SYMBOL_MAP) và text thuần
+            const parts = [];
+            let textBuf = '';
+            for (const ch of [...raw]) {
+                if (SYMBOL_MAP[ch]) {
+                    if (textBuf) {
+                        parts.push(`\\text{${textBuf}}`);
+                        textBuf = '';
+                    }
+                    parts.push(SYMBOL_MAP[ch]);
+                } else {
+                    textBuf += ch;
+                }
+            }
+            if (textBuf) parts.push(`\\text{${textBuf}}`);
+            return parts.join(' ');
+        };
 
         // ── Kiểu rPr (math run properties) ──────────────────────────────────────
         const getRPrStyle = (rPr) => {
@@ -705,14 +747,14 @@ export default function TeacherDashboard() {
                     if (!t) return '';
 
                     const raw = t.textContent;
-                    const mapped = applySymbolMap(raw);
-
                     const rPr = firstChild(node, 'rPr');
                     const style = getRPrStyle(rPr);
 
+                    if (style === 'p') return wrapPlainText(raw); // plain/roman text — handle symbols separately
+                    
+                    const mapped = applySymbolMap(raw);
                     if (style === 'bi') return `\\boldsymbol{${mapped}}`;
                     if (style === 'b') return `\\mathbf{${mapped}}`;
-                    if (style === 'p') return `\\text{${mapped}}`; // plain/roman text
                     // 'i' (italic) is the default math style — no wrapper needed
                     return mapped;
                 }

@@ -93,12 +93,7 @@ export default function ReviewExam() {
         fetchExamInfo();
     }, [submission]);
 
-    // Trigger MathJax typesetting when submission details or filter state changes
-    useEffect(() => {
-        if (typeof window !== "undefined" && window.MathJax && typeof window.MathJax.typesetPromise === "function") {
-            window.MathJax.typesetPromise().catch((err) => console.warn("MathJax typeset error:", err));
-        }
-    }, [submission, filter, loading]);
+    // Math rendering is now handled by KaTeX via the MathText component
 
     if (loading) return (
         <div className="min-h-screen bg-[#f8fafc] flex items-center justify-center">

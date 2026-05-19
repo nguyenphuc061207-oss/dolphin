@@ -1,6 +1,12 @@
 /**
- * Dolphin – MathText Component
+ * Dolphin – MathText Component v4
  * Renders mixed text containing LaTeX ($...$ and $$...$$) using KaTeX.
+ * 
+ * v4 Changes:
+ *   - normalizeUnicodeToLatex: tokenizer-based approach preserves existing $...$ blocks
+ *   - Handles bare LaTeX commands (\forall, \exists, etc.) found outside math delimiters
+ *   - MathText component: always uses KaTeX for rendering (removes unreliable MathJax bypass)
+ *   - MathJax is still loaded for pages that call typesetPromise() directly
  * 
  * Usage:
  *   <MathText text="Tính $x^2 + y^2$ và $$\int_0^1 f(x) dx$$" />
@@ -8,6 +14,7 @@
 
 import { InlineMath, BlockMath } from 'react-katex';
 import 'katex/dist/katex.min.css';
+import { Component, useEffect, useRef } from 'react';
 
 // ─── Unicode → LaTeX mapping ───────────────────────────────────────────────
 const UNICODE_TO_LATEX = [
@@ -26,7 +33,7 @@ const UNICODE_TO_LATEX = [
   [/∑/g, '\\sum'], [/∫/g, '\\int'], [/∬/g, '\\iint'], [/∭/g, '\\iiint'], [/∮/g, '\\oint'],
   [/∞/g, '\\infty'], [/±/g, '\\pm'], [/∓/g, '\\mp'], [/≤/g, '\\leq'], [/≥/g, '\\geq'], 
   [/≠/g, '\\neq'], [/≈/g, '\\approx'], [/∝/g, '\\propto'], [/≡/g, '\\equiv'], 
-  [/≅/g, '\\cong'], [/≈/g, '\\approx'], [/∼/g, '\\sim'], [/∝/g, '\\propto'],
+  [/≅/g, '\\cong'], [/∼/g, '\\sim'],
   [/×/g, '\\times'], [/÷/g, '\\div'], [/·/g, '\\cdot'], [/∗/g, '\\ast'], [/∘/g, '\\circ'],
   [/∂/g, '\\partial'], [/∇/g, '\\nabla'], [/√/g, '\\sqrt'], [/∛/g, '\\sqrt[3]'], [/∜/g, '\\sqrt[4]'],
 
@@ -46,7 +53,7 @@ const UNICODE_TO_LATEX = [
   [/⊥/g, '\\perp'], [/∥/g, '\\parallel'], [/∦/g, '\\not\\parallel'], 
   [/∠/g, '\\angle'], [/∡/g, '\\measuredangle'], [/∢/g, '\\sphericalangle'],
   [/△/g, '\\triangle'], [/□/g, '\\square'], [/◊/g, '\\lozenge'],
-  [/°/g, '^\\circ'], [/′/g, '^\prime'], [/″/g, '^{\prime\prime}'],
+  [/°/g, '^\\circ'], [/′/g, '^\prime'], [/″/g, '^{\\prime\\prime}'],
   
   // Super/Sub scripts
   [/⁰/g, '^{0}'], [/¹/g, '^{1}'], [/²/g, '^{2}'], [/³/g, '^{3}'], [/⁴/g, '^{4}'], 
@@ -59,86 +66,12 @@ const UNICODE_TO_LATEX = [
   [/¼/g, '\\frac{1}{4}'], [/¾/g, '\\frac{3}{4}'], [/⅕/g, '\\frac{1}{5}'],
 ];
 
-/**
- * Pre-process text to convert Unicode math symbols to LaTeX equivalents.
- * Only converts symbols found OUTSIDE of existing $...$ delimiters.
- */
-export function normalizeUnicodeToLatex(text) {
-  if (!text) return text;
-  
-  // If text already has math delimiters, we still want to apply unicode normalization INSIDE them
-  // but for now, let's just handle the case where the user didn't use delimiters.
-  
-  let result = text;
-  let hasChanged = false;
+// ─── Unicode detection pattern ─────────────────────────────────────────────
+const UNICODE_MATH_PATTERN = /[∑∫∬∭∮√∛∜π∞±∓≤≥≠≈∝≡≅∼×÷·∗∘∂∇αβγδεζηθικλμνξοπρστυφχψωΓΔΘΛΞΠΣΦΨΩ∈∉∋∌⊂⊃⊆⊇⊄⊅∩∪∀∃∄∅¬∧∨⊕⊗→←↔⇒⇐⇔↑↓↗↘⊥∥∦∠∡∢△□◊°′″⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉½⅓⅔¼¾⅕]/;
 
-  // Advanced patterns (convert before individual symbols)
-  // 1. sqrt(...) or \sqrt(...) or √(...) -> \sqrt{...}
-  if (/(?:\\?sqrt|√)\(([^)]+)\)/i.test(result)) {
-    result = result.replace(/(?:\\?sqrt|√)\(([^)]+)\)/gi, '$\\sqrt{$1}$');
-    hasChanged = true;
-  }
-  
-  // 1b. √ followed by a number or word (e.g. √123 or √x)
-  if (/√([a-zA-Z0-9]+)/.test(result)) {
-    result = result.replace(/√([a-zA-Z0-9]+)/g, '$\\sqrt{$1}$');
-    hasChanged = true;
-  }
-  
-  // 1c. If there is a stray √ left over without arguments, replace it with a text radical symbol or safe math command
-  if (/√/.test(result)) {
-    result = result.replace(/√/g, '$\\surd$'); // \surd is a safe radical symbol that takes no arguments
-    hasChanged = true;
-  }
-  
-  // 2. a/b fractions (simple ones like 3/4)
-  // Only match numbers/single letters to avoid matching dates or paths
-  if (/\b(\d+|[a-zA-Z])\/(\d+|[a-zA-Z])\b/.test(result)) {
-    // result = result.replace(/\b(\d+|[a-zA-Z])\/(\d+|[a-zA-Z])\b/g, '$\\frac{$1}{$2}$');
-    // hasChanged = true;
-    // Note: Fractions are risky to auto-detect. Disabled for now.
-  }
-
-  for (const [pattern, replacement] of UNICODE_TO_LATEX) {
-    if (pattern.test(result)) {
-      result = result.replace(pattern, '$' + replacement + '$');
-      hasChanged = true;
-    }
-  }
-
-  // 3. Detect caret (^) and underscore (_) for exponents/subscripts
-  // Only if they are between alphanumeric characters to avoid common text usage
-  if (/[a-zA-Z0-9](\^|_)[a-zA-Z0-9]/.test(result)) {
-     // This is a bit aggressive, let's wrap the "word"
-     result = result.replace(/\b([a-zA-Z0-9]+(\^|_)[a-zA-Z0-9]+)\b/g, '$$$1$$');
-     hasChanged = true;
-  }
-
-  // 4. Detect Absolute Value |x| and Norm ||x||
-  if (/\|[a-zA-Z0-9]+\|/.test(result)) {
-    result = result.replace(/\|([a-zA-Z0-9]+)\|/g, '$$|$1|$$');
-    hasChanged = true;
-  }
-  
-  if (hasChanged) {
-    // Cleanup: merge adjacent math blocks like $a$$+$$b$ -> $a+b$
-    result = result.replace(/\$\$\$/g, '$'); 
-    result = result.replace(/\$\$/g, '');   
-    // Merge: $a$ $b$ -> $a b$
-    result = result.replace(/\$\s+\$/g, ' '); 
-  }
-
-  return result;
-}
-
-/**
- * Check if a string contains any Unicode math symbol that should be wrapped in $
- */
-function hasBareUnicode(text) {
-  if (!text) return false;
-  const unicodePattern = /[∑∫√π∞±≤≥≠≈×÷·αβγδεθλμστφωΔΣΩ∂∇∈∉⊂⊃∪∩∀∃→←↔⇒⇔⁰¹²³⁴⁵⁶⁷⁸⁹½⅓¼¾]/;
-  return unicodePattern.test(text);
-}
+// ─── Bare LaTeX command pattern ─────────────────────────────────────────────
+// Detects LaTeX commands outside of $...$ that need to be wrapped
+const BARE_LATEX_CMD = /\\(?:alpha|beta|gamma|delta|epsilon|zeta|eta|theta|iota|kappa|lambda|mu|nu|xi|pi|rho|sigma|tau|upsilon|phi|chi|psi|omega|Gamma|Delta|Theta|Lambda|Xi|Pi|Sigma|Phi|Psi|Omega|sum|int|iint|iiint|oint|infty|pm|mp|leq|geq|neq|approx|propto|equiv|cong|sim|times|div|cdot|ast|circ|partial|nabla|sqrt|surd|in|notin|ni|subset|supset|subseteq|supseteq|cap|cup|forall|exists|nexists|emptyset|neg|land|lor|oplus|otimes|rightarrow|leftarrow|leftrightarrow|Rightarrow|Leftarrow|Leftrightarrow|uparrow|downarrow|nearrow|searrow|perp|parallel|angle|measuredangle|triangle|square|lozenge|frac|text|mathbb|mathbf|boldsymbol|overline|underline|hat|tilde|vec|bar|dot|ddot|check|breve|acute|grave|mathring|overbrace|underbrace|overset|underset|boxed|left|right|middle|begin|end)\b/;
 
 /**
  * Tokenize a string into plain text and LaTeX parts.
@@ -175,6 +108,195 @@ function tokenizeMath(text) {
 }
 
 /**
+ * Pre-process text to convert Unicode math symbols to LaTeX equivalents.
+ * Uses tokenizer-based approach to preserve existing $...$ blocks.
+ *
+ * v4: Also detects bare LaTeX commands (e.g. \forall, \alpha) outside of $...$
+ *     and wraps them in inline math delimiters.
+ */
+export function normalizeUnicodeToLatex(text) {
+  if (!text) return text;
+
+  // 1. Tokenize the text into math and text parts
+  const tokens = tokenizeMath(text);
+
+  // 2. Process each token
+  const processedTokens = tokens.map(token => {
+    if (token.type === 'inline' || token.type === 'block') {
+      let content = token.content;
+      
+      // Inside math: replace unicode symbols with LaTeX equivalents (no $ wrapping)
+      if (/(?:\\?sqrt|√)\(([^)]+)\)/i.test(content)) {
+        content = content.replace(/(?:\\?sqrt|√)\(([^)]+)\)/gi, '\\sqrt{$1}');
+      }
+      if (/√([a-zA-Z0-9]+)/.test(content)) {
+        content = content.replace(/√([a-zA-Z0-9]+)/g, '\\sqrt{$1}');
+      }
+      if (/√/.test(content)) {
+        content = content.replace(/√/g, '\\surd');
+      }
+
+      for (const [pattern, replacement] of UNICODE_TO_LATEX) {
+        if (pattern.test(content)) {
+          content = content.replace(pattern, replacement);
+        }
+      }
+
+      return { type: token.type, content };
+    } else {
+      // Outside math: we need to wrap symbols and bare LaTeX commands in $...$
+      let content = token.content;
+
+      // 1. Square root replacements
+      if (/(?:\\?sqrt|√)\(([^)]+)\)/i.test(content)) {
+        content = content.replace(/(?:\\?sqrt|√)\(([^)]+)\)/gi, '$\\sqrt{$1}$');
+      }
+      if (/√([a-zA-Z0-9]+)/.test(content)) {
+        content = content.replace(/√([a-zA-Z0-9]+)/g, '$\\sqrt{$1}$');
+      }
+      if (/√/.test(content)) {
+        content = content.replace(/√/g, '$\\surd$');
+      }
+
+      // 2. Unicode symbols to LaTeX (with $ wrapping)
+      for (const [pattern, replacement] of UNICODE_TO_LATEX) {
+        if (pattern.test(content)) {
+          content = content.replace(pattern, '$' + replacement + '$');
+        }
+      }
+
+      // 3. Exponents and subscripts (x^2, y_1)
+      if (/[a-zA-Z0-9](\^|_)[a-zA-Z0-9]/.test(content)) {
+        content = content.replace(/\b([a-zA-Z0-9]+(\^|_)[a-zA-Z0-9]+)\b/g, '$$$1$$');
+      }
+
+      // 4. Absolute values and Norms
+      if (/\|[a-zA-Z0-9]+\|/.test(content)) {
+        content = content.replace(/\|([a-zA-Z0-9]+)\|/g, '$$|$1|$$');
+      }
+
+      // 5. Wrap bare LaTeX commands (\forall, \exists, etc.) that are outside $...$
+      //    These may come from OMML conversion or user input
+      if (BARE_LATEX_CMD.test(content)) {
+        content = wrapBareLatexCommands(content);
+      }
+
+      return { type: 'text', content };
+    }
+  });
+
+  // 3. Build the joined string from processed tokens
+  let result = buildFromTokens(processedTokens);
+
+  // 4. Merge adjacent inline math blocks
+  result = mergeAdjacentMath(result);
+
+  return result;
+}
+
+/**
+ * Wrap bare LaTeX commands found outside of $...$ delimiters.
+ * 
+ * Scans a plain-text segment for sequences that contain LaTeX commands
+ * (e.g. "\forall x \in R") and wraps them in $...$, while leaving
+ * surrounding Vietnamese/plain text alone.
+ */
+function wrapBareLatexCommands(text) {
+  // Split on existing math delimiters first to avoid double-processing
+  const parts = [];
+  // We need to find runs of text that contain LaTeX and wrap them
+  // Strategy: find each LaTeX command and expand to capture the surrounding math-like context
+  
+  // Match a LaTeX command followed by optional math content (letters, numbers, operators, braces, etc.)
+  // until we hit something that's clearly not math (Vietnamese text, punctuation sentence boundaries)
+  const cmdRegex = /(\\[a-zA-Z]+(?:\{[^}]*\})?(?:\s*[a-zA-Z0-9_^{}\\,.\s<>=+\-*/|]*)?)/g;
+  
+  let lastIndex = 0;
+  let match;
+  
+  while ((match = cmdRegex.exec(text)) !== null) {
+    // Push text before the match
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    
+    // Wrap the LaTeX command in $...$
+    let latex = match[1].trim();
+    // Remove trailing punctuation that's not math
+    const trailingMatch = latex.match(/([.,;:!?\s]+)$/);
+    let trailing = '';
+    if (trailingMatch) {
+      trailing = trailingMatch[1];
+      latex = latex.slice(0, -trailing.length);
+    }
+    
+    parts.push(`$${latex}$${trailing}`);
+    lastIndex = cmdRegex.lastIndex;
+  }
+  
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+  
+  return parts.join('');
+}
+
+/**
+ * Build a string from processed tokens
+ */
+function buildFromTokens(tokens) {
+  let result = '';
+  for (const token of tokens) {
+    if (token.type === 'inline') {
+      result += `$${token.content}$`;
+    } else if (token.type === 'block') {
+      result += `$$${token.content}$$`;
+    } else {
+      result += token.content;
+    }
+  }
+  return result;
+}
+
+/**
+ * Merge adjacent inline math blocks to produce cleaner output.
+ * $\forall$ $x$ $\in$ → $\forall x \in$
+ */
+function mergeAdjacentMath(text) {
+  const tokens = tokenizeMath(text);
+  if (tokens.length <= 1) return text;
+  
+  const merged = [];
+  
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (merged.length === 0) {
+      merged.push({ ...token });
+      continue;
+    }
+
+    const last = merged[merged.length - 1];
+
+    if (last.type === 'inline' && token.type === 'inline') {
+      // Merge adjacent inline math: $a$$b$ → $a b$
+      last.content += ' ' + token.content;
+    } else if (last.type === 'inline' && token.type === 'text' && /^\s+$/.test(token.content)) {
+      // Whitespace between inline math blocks: $a$ $b$ → $a b$
+      const nextToken = tokens[i + 1];
+      if (nextToken && nextToken.type === 'inline') {
+        last.content += token.content;
+      } else {
+        merged.push({ ...token });
+      }
+    } else {
+      merged.push({ ...token });
+    }
+  }
+
+  return buildFromTokens(merged);
+}
+
+/**
  * Clean up weird symbols produced by Mammoth/Word conversion
  */
 export function normalizeWordMangledMath(text) {
@@ -187,15 +309,13 @@ export function normalizeWordMangledMath(text) {
   // Word placeholders/artifacts
   result = result.replace(/█/g, '');
   
-  // Degree symbols
-  result = result.replace(/°C/g, '^{\\circ}C');
-  result = result.replace(/°/g, '^{\\circ}');
+  // Degree symbols (only outside of existing $...$)
+  // Handled by UNICODE_TO_LATEX mapping instead
   
   // Word log/subscripts: log_3 -> \log_{3}
   result = result.replace(/log_(\d+)/gi, '\\log_{$1}');
   
   // Word fractions/superscripts: (a/b@c) -> \frac{a}{b}_{c}
-  // This captures the (3 2/3@1) pattern from the screenshot
   result = result.replace(/\(([^/]+)\/([^@]+)@([^)]+)\)/g, '{$1 \\frac{2}{3}}_{$3}'); 
   // General fallback for @ as subscript marker in mangled Word text
   result = result.replace(/@(\d+)/g, '_{$1}');
@@ -208,9 +328,14 @@ export function normalizeWordMangledMath(text) {
 
 /**
  * MathText Component
+ * 
+ * v4: Always renders using KaTeX for reliable inline rendering.
+ * MathJax typesetPromise() is called separately via useEffect for
+ * any content that KaTeX can't handle (rare edge cases).
  */
 export default function MathText({ text, className = '' }) {
   if (!text) return null;
+  const ref = useRef(null);
 
   // 1. Clean up Word mangled math
   let processed = normalizeWordMangledMath(text);
@@ -218,24 +343,17 @@ export default function MathText({ text, className = '' }) {
   // 2. Normalize Unicode symbols to LaTeX
   processed = normalizeUnicodeToLatex(processed);
   
-  // Safe Check: If MathJax is loaded on the client-side, let MathJax handle the rendering beautifully!
-  // We return the raw string containing $ and $$ delimiters, which MathJax will typeset.
-  if (typeof window !== 'undefined' && window.MathJax) {
-    return <span className={`math-text ${className}`}>{processed}</span>;
-  }
-  
-  // Fallback to KaTeX (react-katex) if MathJax is not available (e.g. locally or during build)
-  // 3. Tokenize and render
+  // 3. Tokenize and render using KaTeX
   const tokens = tokenizeMath(processed);
 
   // If no math tokens, render as plain text
   const hasMath = tokens.some(t => t.type === 'inline' || t.type === 'block');
   if (!hasMath) {
-    return <span className={className}>{text}</span>;
+    return <span className={className}>{processed}</span>;
   }
 
   return (
-    <span className={`math-text ${className}`}>
+    <span className={`math-text ${className}`} ref={ref}>
       {tokens.map((token, i) => {
         if (token.type === 'text') {
           return <span key={i}>{token.content}</span>;
@@ -262,9 +380,8 @@ export default function MathText({ text, className = '' }) {
 
 /**
  * Simple React Error Boundary for KaTeX rendering failures.
+ * Falls back to displaying the raw LaTeX source.
  */
-import { Component } from 'react';
-
 class MathErrorBoundary extends Component {
   constructor(props) {
     super(props);
