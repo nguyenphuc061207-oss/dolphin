@@ -27,147 +27,7 @@
  *   - hasFormattingMark: requires non-whitespace content inside the tag
  */
 
-import { normalizeUnicodeToLatex, normalizeWordMangledMath } from './mathText';
-
-const DEFAULT_MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024;
-const DEFAULT_MAX_PDF_PAGES = 1000;
-
-function normalizeXmlNamespaceName(name) {
-    return String(name || '').replace(/^.*:/, '').toLowerCase();
-}
-
-function normalizeMathText(text) {
-    if (!text) return text;
-    let normalized = normalizeWordMangledMath(text);
-    normalized = normalized.replace(/\\(neg|land|lor|forall|exists|nexists|in|notin|subseteq|supseteq|subset|supset|cap|cup|leq|geq|neq|approx|equiv|cong|sim|rightarrow|leftarrow|leftrightarrow|Rightarrow|Leftarrow|Leftrightarrow|times|div|cdot|pm|mp|partial|nabla|infty|sum|int|sqrt)(?=[A-Za-zÀ-ỹ0-9])/g, '\\$1 ');
-    normalized = normalizeUnicodeToLatex(normalized);
-    return normalized
-        .replace(/[\u00A0\u200B\u200C\u200D]/g, ' ')
-        .replace(/\s*([:→←↔⇒⇐⇔=≠≤≥<>])/g, '$1')
-        .replace(/\s*([,;])\s*/g, '$1 ')
-        .replace(/\s*([()+\-*/])\s*/g, '$1')
-        .replace(/\s+([\]}])/g, '$1')
-        .replace(/([\[{(])\s+/g, '$1')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-export function findXmlNodeByLocalName(root, localName) {
-    if (!root || !localName) return null;
-    const wanted = String(localName).toLowerCase();
-    const queue = [root];
-
-    while (queue.length) {
-        const node = queue.shift();
-        if (!node) continue;
-
-        const nodeLocalName = normalizeXmlNamespaceName(node.localName || node.nodeName || node.tagName);
-        if (nodeLocalName === wanted) return node;
-
-        const children = node.children || node.childNodes || [];
-        for (const child of children) {
-            if (child && typeof child === 'object') queue.push(child);
-        }
-    }
-
-    return null;
-}
-
-export function getXmlElementsByLocalName(root, localName) {
-    if (!root || !localName) return [];
-    const wanted = String(localName).toLowerCase();
-    const result = [];
-    const queue = [root];
-
-    while (queue.length) {
-        const node = queue.shift();
-        if (!node) continue;
-
-        const nodeLocalName = normalizeXmlNamespaceName(node.localName || node.nodeName || node.tagName);
-        if (nodeLocalName === wanted) result.push(node);
-
-        const children = node.children || node.childNodes || [];
-        for (const child of children) {
-            if (child && typeof child === 'object') queue.push(child);
-        }
-    }
-
-    return result;
-}
-
-function isPdfTextItem(item) {
-    return item && typeof item.str === 'string' && Array.isArray(item.transform) && item.transform.length >= 6;
-}
-
-export function groupPdfTextItemsByLine(items, yTolerance = 2) {
-    if (!Array.isArray(items) || items.length === 0) return [];
-
-    const lines = [];
-    const sorted = items.filter(isPdfTextItem).map((item) => ({
-        ...item,
-        _y: Number(item.transform[5]) || 0,
-    })).sort((a, b) => b._y - a._y || ((a.transform?.[4] || 0) - (b.transform?.[4] || 0)));
-
-    for (const item of sorted) {
-        const lastLine = lines[lines.length - 1];
-        if (lastLine && Math.abs(lastLine.y - item._y) <= yTolerance) {
-            lastLine.items.push(item);
-            continue;
-        }
-        lines.push({ y: item._y, items: [item] });
-    }
-
-    return lines.map((line) => ({
-        y: line.y,
-        text: line.items
-            .slice()
-            .sort((a, b) => (a.transform?.[4] || 0) - (b.transform?.[4] || 0))
-            .map((item) => item.str)
-            .join('')
-            .trim(),
-    })).filter((line) => line.text);
-}
-
-export function extractPdfTextFromItems(items, yTolerance = 2) {
-    return groupPdfTextItemsByLine(items, yTolerance).map((line) => line.text).join('\n');
-}
-
-export async function extractTextFromPdfDocument(pdfDocument, options = {}) {
-    const { maxPages = DEFAULT_MAX_PDF_PAGES, yTolerance = 2 } = options;
-    if (!pdfDocument || typeof pdfDocument.numPages !== 'number') return '';
-
-    const totalPages = Math.min(pdfDocument.numPages, maxPages);
-    const pageTexts = [];
-
-    for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
-        let page = null;
-        try {
-            page = await pdfDocument.getPage(pageNumber);
-            const textContent = await page.getTextContent();
-            pageTexts.push(extractPdfTextFromItems(textContent.items, yTolerance));
-        } catch (error) {
-            console.error(`PDF page ${pageNumber} parse failed:`, error);
-        } finally {
-            if (page?.cleanup) {
-                try {
-                    page.cleanup();
-                } catch (cleanupError) {
-                    console.warn(`PDF page ${pageNumber} cleanup failed:`, cleanupError);
-                }
-            }
-            page = null;
-        }
-    }
-
-    return pageTexts.join('\n\n');
-}
-
-export function assertFileSizeWithinLimit(file, maxBytes = DEFAULT_MAX_FILE_SIZE_BYTES) {
-    const size = typeof file === 'number' ? file : file?.size;
-    if (typeof size === 'number' && size > maxBytes) {
-        throw new Error(`File too large. Maximum allowed size is ${Math.round(maxBytes / (1024 * 1024))}MB.`);
-    }
-}
+import { normalizeUnicodeToLatex } from '../components/MathText';
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -188,14 +48,10 @@ function stripHtml(html) {
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
-        .replace(/&nbsp;|&#160;/g, ' ')
+        .replace(/&nbsp;/g, ' ')
         .replace(/&quot;/g, '"')
         .replace(/&#39;/g, "'")
-        .replace(/[\u00A0\u200B\u200C\u200D]/g, ' ')
-        .replace(/[ \t\f\v]+/g, ' ')
-        .replace(/\n[ \t\f\v]+/g, '\n')
-        .replace(/[ \t\f\v]+\n/g, '\n')
-        .replace(/\n{3,}/g, '\n\n')
+        .replace(/\s+/g, ' ')
         .trim();
 }
 
@@ -523,10 +379,7 @@ function applyAnswerKeyTable(blocks, keyMap) {
 export function parseQuestionsFromText(text) {
     if (!text?.trim()) return [];
 
-    const lines = text
-        .split(/\r?\n/)
-        .map(l => l.replace(/[\u00A0\u200B\u200C\u200D]/g, ' ').replace(/[ \t\f\v]+/g, ' ').trim())
-        .filter(Boolean);
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     const answerKeyTable = extractAnswerKeyTable(text);
 
     const blocks = [];
@@ -596,11 +449,7 @@ export function parseQuestionsFromText(text) {
 
     return blocks
         .filter(b => b.content.trim() !== '')
-        .map((block) => {
-            block.content = normalizeMathText(block.content);
-            block.options = block.options.map((option) => normalizeMathText(option));
-            return finalizeBlock(block);
-        });
+        .map(finalizeBlock);
 }
 
 // ─────────────────────────────────────────────
@@ -630,7 +479,7 @@ export function parseQuestionsFromHtml(html) {
 
     const htmlLines = normalized
         .split(/\r?\n/)
-        .map(l => l.replace(/[\u00A0\u200B\u200C\u200D]/g, ' ').replace(/[ \t\f\v]+/g, ' ').trim())
+        .map(l => l.trim())
         .filter(l => l !== '' && l !== '&nbsp;');
 
     const rawTextLines = htmlLines.map(stripHtml);
@@ -731,8 +580,10 @@ export function parseQuestionsFromHtml(html) {
     // Resolve Format-A bold answers; only apply when Format B hasn't fired
     for (const block of blocks) {
         if (block._boldAnswers.length > 0 && block.correctAnswer === -1) {
-            const unique = [...new Set(block._boldAnswers)].sort((a, b) => a - b);
-            block.correctAnswer = unique.length === 1 ? unique[0] : unique;
+            block.correctAnswer =
+                block._boldAnswers.length === 1
+                    ? block._boldAnswers[0]
+                    : block._boldAnswers; // multi-select
         }
         delete block._boldAnswers;
         delete block.optionsHtml;
