@@ -38,57 +38,48 @@ function Navigation() {
             <div className="relative">
               <button
                 onClick={() => setIsOpen(!isOpen)}
-                className="flex items-center gap-3 p-1 pr-3 rounded-full hover:bg-gray-100 transition-all border border-gray-100 shadow-sm bg-white cursor-pointer"
+                className="flex items-center gap-3 p-1 pr-3 rounded-full hover:bg-gray-100 transition-all border border-gray-100 shadow-sm"
               >
-                <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold uppercase text-sm shrink-0">
+                <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold uppercase text-sm">
                   {currentUser.displayName?.charAt(0)}
                 </div>
                 <div className="hidden sm:block text-left">
                   <p className="text-xs font-semibold text-gray-900 leading-none">
                     {currentUser.displayName} <span className="text-gray-400 font-normal">#{currentUser.shortId}</span>
                   </p>
-                  <p className="text-[10px] text-gray-500 font-extrabold uppercase mt-1 leading-none">
-                    {currentUser.role === 'teacher' ? 'GIÁO VIÊN' : 'HỌC SINH'}
-                  </p>
+                  <p className="text-[10px] text-gray-500 font-medium uppercase mt-1">Thành viên</p>
                 </div>
               </button>
 
               {isOpen && (
-                <div className="absolute right-0 mt-2 w-56 bg-white rounded-2xl shadow-xl border border-gray-200 py-2 overflow-hidden z-50 animate-in fade-in slide-in-from-top-3 duration-200 text-left">
-                  <div className="px-4 py-2 border-b border-gray-100 mb-1">
-                    <p className="text-[10px] text-gray-400 font-black uppercase tracking-wider">Tài khoản</p>
+                <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-gray-100 py-2 overflow-hidden z-50">
+                  <div className="px-4 py-2 border-b border-gray-50 mb-1">
+                    <p className="text-xs text-gray-400 font-medium uppercase">Tài khoản</p>
                   </div>
                   <Link
-                    to='/'
-                    className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition font-semibold"
-                    onClick={() => setIsOpen(false)}
-                  >
-                    <BookOpen className="w-4 h-4 text-gray-400" /> Trang chủ
-                  </Link>
-                  <Link
                     to='/teacher'
-                    className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 transition font-semibold"
+                    className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 transition"
                     onClick={() => setIsOpen(false)}
                   >
-                    <LayoutDashboard className="w-4 h-4 text-blue-500" /> Khu Giáo viên
+                    <BookOpen className="w-4 h-4" /> Khu Giáo viên
                   </Link>
                   <Link
                     to='/student'
-                    className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-emerald-50 transition font-semibold"
+                    className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-emerald-50 transition"
                     onClick={() => setIsOpen(false)}
                   >
-                    <Users className="w-4 h-4 text-emerald-500" /> Khu học sinh
+                    <Users className="w-4 h-4" /> Khu học sinh
                   </Link>
                   <Link
                     to='/friends'
-                    className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-indigo-50 transition font-semibold"
+                    className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-indigo-50 transition"
                     onClick={() => setIsOpen(false)}
                   >
-                    <UserPlus className="w-4 h-4 text-indigo-500" /> Bạn bè
+                    <UserPlus className="w-4 h-4" /> Bạn bè
                   </Link>
                   <button
                     onClick={handleLogout}
-                    className="w-full flex items-center gap-2 text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition border-t border-gray-100 font-semibold cursor-pointer"
+                    className="w-full flex items-center gap-2 text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition border-t border-gray-50"
                   >
                     <LogOut className="w-4 h-4" /> Đăng xuất
                   </button>
