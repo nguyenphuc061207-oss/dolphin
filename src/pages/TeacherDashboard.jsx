@@ -278,7 +278,73 @@ export default function TeacherDashboard() {
         setAllowedUsers(allowedUsers.filter((_, i) => i !== idx));
     };
 
-    // Math rendering is now handled by KaTeX via the MathText component
+    // Điều khiển modal chỉnh sửa quyền truy cập trực tiếp
+    const handleOpenAccessModal = (exam) => {
+        setSelectedExamForAccess(exam);
+        setModalAccessType(exam.accessType || 'public');
+        setModalAllowedUsers(exam.allowedUsers || []);
+        setModalSelectedFriendId('');
+        setModalManualName('');
+        setModalManualId('');
+    };
+
+    const handleAddFriendToModalAllowed = () => {
+        if (!modalSelectedFriendId) return alert("Vui lòng chọn một người bạn.");
+        const friend = friendsList.find(f => f.id === modalSelectedFriendId);
+        if (!friend) return;
+
+        const exists = modalAllowedUsers.some(u => u.shortId === friend.friendShortId && u.name.toLowerCase() === friend.friendName.toLowerCase());
+        if (exists) return alert("Học sinh này đã có trong danh sách được cho phép.");
+
+        setModalAllowedUsers([...modalAllowedUsers, { name: friend.friendName, shortId: friend.friendShortId }]);
+        setModalSelectedFriendId('');
+    };
+
+    const handleAddManualToModalAllowed = () => {
+        if (!modalManualName.trim() || !modalManualId.trim()) {
+            return alert("Vui lòng nhập đầy đủ họ tên và ID định danh.");
+        }
+        if (modalManualId.trim().length !== 4 || isNaN(modalManualId.trim())) {
+            return alert("ID định danh phải là mã 4 chữ số.");
+        }
+
+        const exists = modalAllowedUsers.some(u => u.shortId === modalManualId.trim() && u.name.toLowerCase() === modalManualName.trim().toLowerCase());
+        if (exists) return alert("Học sinh này đã có trong danh sách được cho phép.");
+
+        setModalAllowedUsers([...modalAllowedUsers, { name: modalManualName.trim(), shortId: modalManualId.trim() }]);
+        setModalManualName('');
+        setModalManualId('');
+    };
+
+    const handleRemoveFromModalAllowed = (idx) => {
+        setModalAllowedUsers(modalAllowedUsers.filter((_, i) => i !== idx));
+    };
+
+    const handleSaveAccessSettings = async () => {
+        if (!selectedExamForAccess) return;
+        setIsSavingAccess(true);
+        try {
+            const examRef = doc(db, "exams", selectedExamForAccess.id);
+            await updateDoc(examRef, {
+                accessType: modalAccessType,
+                allowedUsers: modalAccessType === 'restricted' ? modalAllowedUsers : []
+            });
+            alert("Cập nhật quyền truy cập đề thi thành công!");
+            setSelectedExamForAccess(null);
+            fetchExams();
+        } catch (e) {
+            console.error(e);
+            alert("Lỗi khi cập nhật quyền truy cập.");
+        }
+        setIsSavingAccess(false);
+    };
+
+    // Safe check and trigger MathJax typesetting when questions or preview list changes
+    useEffect(() => {
+        if (typeof window !== "undefined" && window.MathJax && typeof window.MathJax.typesetPromise === "function") {
+            window.MathJax.typesetPromise().catch((err) => console.warn("MathJax typeset error:", err));
+        }
+    }, [questions, previewQuestions]);
 
     const handleOptionChange = (index, value) => {
         const newOptions = [...options];
@@ -1288,78 +1354,132 @@ export default function TeacherDashboard() {
                         <span className="font-bold text-gray-800 lg:hidden">Dolphin</span>
                     </div>
 
-                    <div className="relative">
-                        <button
-                            onClick={handleToggleNotifications}
-                            className="w-10 h-10 rounded-full hover:bg-gray-50 flex items-center justify-center border border-gray-100 relative cursor-pointer"
-                        >
-                            <Bell className="w-5 h-5 text-gray-600" />
-                            {unreadCount > 0 && (
-                                <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center border-2 border-white animate-pulse">
-                                    {unreadCount}
-                                </span>
-                            )}
-                        </button>
-
-                        {showNotifications && (
-                            <div className="absolute right-0 mt-3 w-80 bg-white rounded-2xl border border-gray-200 shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-3 duration-200">
-                                <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
-                                    <span className="font-extrabold text-sm text-gray-800 flex items-center gap-1.5">
-                                        <Bell className="w-4 h-4 text-blue-600" /> Thông báo gần đây
+                    <div className="flex items-center gap-4">
+                        {/* Hộp chứa Chuông thông báo */}
+                        <div className="relative">
+                            <button
+                                onClick={handleToggleNotifications}
+                                className="w-10 h-10 rounded-full hover:bg-gray-50 flex items-center justify-center border border-gray-100 relative cursor-pointer animate-in fade-in duration-200"
+                            >
+                                <Bell className="w-5 h-5 text-gray-600" />
+                                {unreadCount > 0 && (
+                                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center border-2 border-white animate-pulse">
+                                        {unreadCount}
                                     </span>
-                                    {unreadCount > 0 && (
-                                        <button
-                                            onClick={() => {
-                                                setUnreadCount(0);
-                                                localStorage.setItem(`notifications_last_seen_${currentUser.uid}`, Date.now().toString());
-                                            }}
-                                            className="text-[10px] font-bold text-blue-600 hover:underline cursor-pointer"
-                                        >
-                                            Đánh dấu đã đọc
-                                        </button>
-                                    )}
-                                </div>
-                                <div className="max-h-80 overflow-y-auto divide-y divide-gray-100">
-                                    {notifications.length === 0 ? (
-                                        <div className="p-8 text-center text-gray-400 text-xs">
-                                            <p className="font-medium">Chưa có thông báo nào.</p>
-                                            <p className="text-[10px] text-gray-400 mt-0.5">Khi có học sinh nộp bài thi, thông báo sẽ xuất hiện ở đây.</p>
-                                        </div>
-                                    ) : (
-                                        notifications.map((notif) => {
-                                            const notifTime = notif.submittedAt?.toDate
-                                                ? notif.submittedAt.toDate().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-                                                : new Date(notif.submittedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+                                )}
+                            </button>
 
-                                            const notifDate = notif.submittedAt?.toDate
-                                                ? notif.submittedAt.toDate().toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })
-                                                : new Date(notif.submittedAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+                            {showNotifications && (
+                                <div className="absolute right-0 mt-3 w-80 bg-white rounded-2xl border border-gray-200 shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-3 duration-200">
+                                    <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+                                        <span className="font-extrabold text-sm text-gray-800 flex items-center gap-1.5">
+                                            <Bell className="w-4 h-4 text-blue-600" /> Thông báo gần đây
+                                        </span>
+                                        {unreadCount > 0 && (
+                                            <button
+                                                onClick={() => {
+                                                    setUnreadCount(0);
+                                                    localStorage.setItem(`notifications_last_seen_${currentUser.uid}`, Date.now().toString());
+                                                }}
+                                                className="text-[10px] font-bold text-blue-600 hover:underline cursor-pointer"
+                                            >
+                                                Đánh dấu đã đọc
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="max-h-80 overflow-y-auto divide-y divide-gray-100">
+                                        {notifications.length === 0 ? (
+                                            <div className="p-8 text-center text-gray-400 text-xs">
+                                                <p className="font-medium">Chưa có thông báo nào.</p>
+                                                <p className="text-[10px] text-gray-400 mt-0.5">Khi có học sinh nộp bài thi, thông báo sẽ xuất hiện ở đây.</p>
+                                            </div>
+                                        ) : (
+                                            notifications.map((notif) => {
+                                                const notifTime = notif.submittedAt?.toDate
+                                                    ? notif.submittedAt.toDate().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+                                                    : new Date(notif.submittedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
-                                            return (
-                                                <div key={notif.id} className="p-4 hover:bg-blue-50/30 transition-colors text-xs text-gray-600 text-left">
-                                                    <p className="leading-relaxed">
-                                                        Học sinh <span className="font-extrabold text-gray-900">{notif.studentName}</span> đã nộp bài thi <span className="font-bold text-blue-600">{notif.examTitle}</span>.
-                                                    </p>
-                                                    <div className="flex items-center justify-between mt-2 text-[10px] font-bold text-gray-400">
-                                                        <span>Điểm số: <span className="text-emerald-600 font-extrabold">{notif.score}/10</span></span>
-                                                        <span>{notifTime} - {notifDate}</span>
+                                                const notifDate = notif.submittedAt?.toDate
+                                                    ? notif.submittedAt.toDate().toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })
+                                                    : new Date(notif.submittedAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+
+                                                return (
+                                                    <div key={notif.id} className="p-4 hover:bg-blue-50/30 transition-colors text-xs text-gray-600 text-left">
+                                                        <p className="leading-relaxed">
+                                                            Học sinh <span className="font-extrabold text-gray-900">{notif.studentName}</span> đã nộp bài thi <span className="font-bold text-blue-600">{notif.examTitle}</span>.
+                                                        </p>
+                                                        <div className="flex items-center justify-between mt-2 text-[10px] font-bold text-gray-400">
+                                                            <span>Điểm số: <span className="text-emerald-600 font-extrabold">{notif.score}/10</span></span>
+                                                            <span>{notifTime} - {notifDate}</span>
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            );
-                                        })
-                                    )}
+                                                );
+                                            })
+                                        )}
+                                    </div>
                                 </div>
-                                <div className="p-3 border-t border-gray-100 bg-gray-50/50 text-center">
+                            )}
+                        </div>
+
+                        {/* Nút hiển thị thông tin tên giáo viên giống ở ngoài */}
+                        <div className="relative pl-4 border-l border-gray-150 flex items-center">
+                            <button
+                                onClick={() => setIsProfileOpen(!isProfileOpen)}
+                                className="flex items-center gap-3 p-1 pr-3 rounded-full hover:bg-gray-100 transition-all border border-gray-100 shadow-xs cursor-pointer bg-white"
+                            >
+                                <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold uppercase text-sm shrink-0">
+                                    {currentUser?.displayName ? currentUser.displayName.charAt(0).toUpperCase() : "G"}
+                                </div>
+                                <div className="hidden sm:block text-left">
+                                    <p className="text-xs font-bold text-gray-900 leading-none">
+                                        {currentUser?.displayName} <span className="text-gray-400 font-medium">#{currentUser?.shortId}</span>
+                                    </p>
+                                    <p className="text-[10px] text-gray-500 font-extrabold uppercase mt-1 leading-none">GIÁO VIÊN</p>
+                                </div>
+                            </button>
+
+                            {isProfileOpen && (
+                                <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-2xl shadow-xl border border-gray-200 py-2 overflow-hidden z-50 animate-in fade-in slide-in-from-top-3 duration-200 text-left">
+                                    <div className="px-4 py-2 border-b border-gray-100 mb-1">
+                                        <p className="text-[10px] text-gray-400 font-black uppercase tracking-wider">Tài khoản</p>
+                                    </div>
                                     <Link
-                                        to="/teacher/exams"
-                                        onClick={() => setShowNotifications(false)}
-                                        className="text-[11px] font-extrabold text-gray-500 hover:text-blue-600 transition-colors uppercase tracking-tight"
+                                        to="/"
+                                        className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition font-semibold animate-in fade-in duration-100"
+                                        onClick={() => setIsProfileOpen(false)}
                                     >
-                                        Quản lý đề thi của tôi
+                                        <BookOpen className="w-4 h-4 text-gray-400" /> Trang chủ
                                     </Link>
+                                    <Link
+                                        to='/teacher'
+                                        className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 transition font-semibold animate-in fade-in duration-100"
+                                        onClick={() => setIsProfileOpen(false)}
+                                    >
+                                        <LayoutDashboard className="w-4 h-4 text-blue-500" /> Khu Giáo viên
+                                    </Link>
+                                    <Link
+                                        to='/student'
+                                        className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-emerald-50 transition font-semibold animate-in fade-in duration-100"
+                                        onClick={() => setIsProfileOpen(false)}
+                                    >
+                                        <Users className="w-4 h-4 text-emerald-500" /> Khu học sinh
+                                    </Link>
+                                    <Link
+                                        to='/friends'
+                                        className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-indigo-50 transition font-semibold animate-in fade-in duration-100"
+                                        onClick={() => setIsProfileOpen(false)}
+                                    >
+                                        <UserPlus className="w-4 h-4 text-indigo-500" /> Bạn bè
+                                    </Link>
+                                    <button
+                                        onClick={handleLogout}
+                                        className="w-full flex items-center gap-2 text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition border-t border-gray-100 font-semibold cursor-pointer"
+                                    >
+                                        <LogOut className="w-4 h-4" /> Đăng xuất
+                                    </button>
                                 </div>
-                            </div>
-                        )}
+                            )}
+                        </div>
                     </div>
                 </header>
 
@@ -1683,8 +1803,8 @@ export default function TeacherDashboard() {
                                                                                 </div>
                                                                                 {labelSuffix && (
                                                                                     <span className={`text-[10px] font-black px-2 py-0.5 rounded-full shrink-0 border ${labelSuffix === 'Đúng'
-                                                                                            ? 'bg-emerald-100 border-emerald-200 text-emerald-700'
-                                                                                            : 'bg-rose-100 border-rose-200 text-rose-700'
+                                                                                        ? 'bg-emerald-100 border-emerald-200 text-emerald-700'
+                                                                                        : 'bg-rose-100 border-rose-200 text-rose-700'
                                                                                         }`}>
                                                                                         {labelSuffix}
                                                                                     </span>
@@ -1918,11 +2038,10 @@ export default function TeacherDashboard() {
                                             <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {exam.duration}p</span>
                                         </div>
                                         <div className="flex gap-2">
-                                            <Link to={`/teacher/exam/${exam.id}/submissions`} className="flex-1 py-2 bg-blue-50 text-blue-600 text-[10px] font-black rounded-lg flex items-center justify-center gap-1 hover:bg-blue-100 transition-colors uppercase"><BarChart3 className="w-3 h-3" /> Thống kê</Link>
-                                            <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/student/exam/${exam.id}`); alert("Copy link bài thi!"); }} className="flex-1 py-2 bg-gray-50 text-gray-600 text-[10px] font-black rounded-lg flex items-center justify-center gap-1 hover:bg-gray-100 transition-colors uppercase"><Copy className="w-3 h-3" /> Link</button>
-                                            <button onClick={() => handleDeleteExam(exam.id)} className="w-10 py-2 bg-red-50 text-red-500 rounded-lg flex items-center justify-center hover:bg-red-100 transition-colors" title="Xóa đề thi">
-                                                <Trash2 className="w-4 h-4" />
-                                            </button>
+                                            <Link to={`/teacher/exam/${exam.id}/submissions`} className="flex-1 py-2 bg-blue-50 text-blue-600 text-[10px] font-black rounded-lg flex items-center justify-center gap-1 hover:bg-blue-100 transition-colors uppercase" title="Xem thống kê"><BarChart3 className="w-3.5 h-3.5" /> Thống kê</Link>
+                                            <button onClick={() => handleOpenAccessModal(exam)} className="py-2 px-2.5 bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-100 transition-colors" title="Quyền truy cập"><Shield className="w-3.5 h-3.5" /></button>
+                                            <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/student/exam/${exam.id}`); alert("Copy link bài thi!"); }} className="py-2 px-2.5 bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 transition-colors" title="Copy Link"><Copy className="w-3.5 h-3.5" /></button>
+                                            <button onClick={() => handleDeleteExam(exam.id)} className="py-2 px-2.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 transition-colors" title="Xóa đề thi"><Trash2 className="w-3.5 h-3.5" /></button>
                                         </div>
                                     </div>
                                 ))}
@@ -1930,6 +2049,141 @@ export default function TeacherDashboard() {
                         </div>
                     </div>
                 </main>
+
+                {/* Modal chỉnh sửa Quyền truy cập trực tiếp */}
+                {selectedExamForAccess && (
+                    <div className="fixed inset-0 bg-black/55 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-200 text-left">
+                        <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden border border-gray-150 animate-in zoom-in-95 duration-200">
+                            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                                <div className="flex items-center gap-2">
+                                    <Shield className="w-5 h-5 text-blue-600 animate-pulse" />
+                                    <h3 className="font-extrabold text-gray-900 text-lg">Quyền truy cập đề thi</h3>
+                                </div>
+                                <button onClick={() => setSelectedExamForAccess(null)} className="p-1.5 hover:bg-gray-150 rounded-lg text-gray-400 hover:text-gray-700 transition">
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+                            <div className="p-6 space-y-6 max-h-[500px] overflow-y-auto">
+                                <div>
+                                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Tên đề thi chỉnh sửa</p>
+                                    <p className="text-base font-bold text-gray-900">{selectedExamForAccess.title}</p>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Quyền truy cập</label>
+                                    <select
+                                        value={modalAccessType}
+                                        onChange={(e) => setModalAccessType(e.target.value)}
+                                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 transition text-sm font-semibold cursor-pointer"
+                                    >
+                                        <option value="public">Bất kỳ ai có đường liên kết</option>
+                                        <option value="restricted">Hạn chế (Chỉ những học sinh được chỉ định)</option>
+                                    </select>
+                                </div>
+
+                                {modalAccessType === 'restricted' && (
+                                    <div className="p-4 bg-gray-50 border border-gray-200 rounded-2xl space-y-4">
+                                        <p className="text-xs font-black text-gray-500 uppercase tracking-widest leading-none">Cấu hình danh sách học sinh</p>
+
+                                        {/* Thêm từ bạn bè */}
+                                        <div className="space-y-2">
+                                            <label className="block text-[11px] font-bold text-gray-500">Thêm từ bạn bè có sẵn:</label>
+                                            <div className="flex gap-2">
+                                                <select
+                                                    value={modalSelectedFriendId}
+                                                    onChange={(e) => setModalSelectedFriendId(e.target.value)}
+                                                    className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer font-medium"
+                                                >
+                                                    <option value="">-- Chọn bạn bè --</option>
+                                                    {friendsList.map(friend => (
+                                                        <option key={friend.id} value={friend.id}>
+                                                            {friend.friendName} #{friend.friendShortId}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleAddFriendToModalAllowed}
+                                                    className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition"
+                                                >
+                                                    Thêm
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {/* Nhập thủ công */}
+                                        <div className="space-y-2 pt-3 border-t border-gray-200/60">
+                                            <label className="block text-[11px] font-bold text-gray-500">Nhập thủ công học sinh khác:</label>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <input
+                                                    type="text"
+                                                    placeholder="Tên học sinh"
+                                                    value={modalManualName}
+                                                    onChange={(e) => setModalManualName(e.target.value)}
+                                                    className="px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
+                                                />
+                                                <input
+                                                    type="text"
+                                                    placeholder="ID (4 chữ số)"
+                                                    maxLength={4}
+                                                    value={modalManualId}
+                                                    onChange={(e) => setModalManualId(e.target.value)}
+                                                    className="px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
+                                                />
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={handleAddManualToModalAllowed}
+                                                className="w-full py-2 bg-gray-900 hover:bg-black text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1"
+                                            >
+                                                <Plus className="w-3.5 h-3.5" /> Thêm học sinh thủ công
+                                            </button>
+                                        </div>
+
+                                        {/* Danh sách đã thêm */}
+                                        <div className="pt-3 border-t border-gray-200/60 text-left">
+                                            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Đã thêm ({modalAllowedUsers.length}):</p>
+                                            {modalAllowedUsers.length === 0 ? (
+                                                <p className="text-xs text-gray-400 italic">Chưa có học sinh nào được chỉ định. Đề thi sẽ không thể làm bởi bất kì ai.</p>
+                                            ) : (
+                                                <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                                                    {modalAllowedUsers.map((user, idx) => (
+                                                        <div key={idx} className="flex items-center justify-between p-2 bg-white rounded-xl border border-gray-200/60 text-xs">
+                                                            <span className="font-bold text-gray-700">{user.name} <span className="text-gray-400 font-medium">#{user.shortId}</span></span>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleRemoveFromModalAllowed(idx)}
+                                                                className="p-1 text-red-500 hover:bg-red-50 rounded-lg transition"
+                                                                title="Xóa khỏi danh sách"
+                                                            >
+                                                                <Trash2 className="w-3.5 h-3.5" />
+                                                            </button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="p-6 border-t border-gray-100 flex gap-3 bg-gray-50/50">
+                                <button
+                                    onClick={() => setSelectedExamForAccess(null)}
+                                    className="flex-1 py-3 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-bold rounded-xl text-sm transition"
+                                >
+                                    Hủy bỏ
+                                </button>
+                                <button
+                                    onClick={handleSaveAccessSettings}
+                                    disabled={isSavingAccess}
+                                    className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm transition disabled:opacity-50"
+                                >
+                                    {isSavingAccess ? "Đang lưu..." : "Lưu thay đổi"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );
