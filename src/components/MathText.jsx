@@ -1,6 +1,6 @@
 import { InlineMath, BlockMath } from 'react-katex';
 import 'katex/dist/katex.min.css';
-import { Component, useRef } from 'react';
+import { Component } from 'react';
 import { normalizeUnicodeToLatex, normalizeWordMangledMath, tokenizeMath } from '../utils/mathText';
 
 /**
@@ -12,7 +12,6 @@ import { normalizeUnicodeToLatex, normalizeWordMangledMath, tokenizeMath } from 
  */
 export default function MathText({ text, className = '' }) {
   if (!text) return null;
-  const ref = useRef(null);
 
   let processed = normalizeWordMangledMath(text);
   processed = normalizeUnicodeToLatex(processed);
@@ -24,7 +23,7 @@ export default function MathText({ text, className = '' }) {
   }
 
   return (
-    <span className={`math-text ${className}`} ref={ref}>
+    <span className={`math-text ${className}`}>
       {tokens.map((token, i) => {
         if (token.type === 'text') {
           return <span key={i}>{token.content}</span>;

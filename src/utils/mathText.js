@@ -91,6 +91,15 @@ export function normalizeWordMangledMath(text) {
   let result = text;
   result = result.replace(/[〚〛]/g, '$');
   result = result.replace(/█/g, '');
+
+  // Official-board exports sometimes insert spaces inside LaTeX commands,
+  // e.g. "\\f or a l x" or "\\ e x i s t s". Collapse those back into
+  // standard commands before any other normalization runs.
+  result = result.replace(/\\\s*([A-Za-z]+(?:\s+[A-Za-z]+)*)/g, (_, command) => {
+    const compact = command.replace(/\s+/g, '');
+    return `\\${compact}`;
+  });
+
   result = result.replace(/\\(neg|land|lor|forall|exists|nexists|in|notin|subseteq|supseteq|subset|supset|cap|cup|leq|geq|neq|approx|equiv|cong|sim|rightarrow|leftarrow|leftrightarrow|Rightarrow|Leftarrow|Leftrightarrow|times|div|cdot|pm|mp|partial|nabla|infty|sum|int|sqrt)(?=[A-Za-zÀ-ỹ0-9])/g, '\\$1 ');
   result = result.replace(/log_(\d+)/gi, '\\log_{$1}');
   result = result.replace(/\(([^/]+)\/([^@]+)@([^)]+)\)/g, '{$1 \\frac{2}{3}}_{$3}');
