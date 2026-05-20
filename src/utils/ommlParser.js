@@ -82,16 +82,13 @@ const toLatex = (() => {
             case 'oMathPara':
                 return allChildren(node, 'oMath')
                     .map((n) => {
-                        let content = Array.from(n.childNodes).map(toLatex).join('');
-                        content = content.replace(/(\\[a-zA-Z]+)(?=[a-zA-Z0-9])/g, '$1 ');
+                        const content = Array.from(n.childNodes).map(toLatex).join('');
                         return `$$${content}$$`;
                     })
                     .join('\n');
 
             case 'oMath': {
-                let mathContent = kids();
-                // Lớp bảo vệ cuối cùng: Quét chuỗi tìm các lệnh dính ký tự thường để chèn space khẩn cấp
-                mathContent = mathContent.replace(/(\\[a-zA-Z]+)(?=[a-zA-Z0-9])/g, '$1 ');
+                const mathContent = kids();
                 return `$${mathContent}$`;
             }
 

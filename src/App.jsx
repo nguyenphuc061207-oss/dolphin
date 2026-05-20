@@ -44,11 +44,8 @@ function Navigation() {
                   {currentUser.displayName?.charAt(0)}
                 </div>
                 <div className="hidden sm:block text-left">
-                  <p className="text-xs font-semibold text-gray-900 leading-none">
+                  <p className="text-xs font-semibold text-gray-900">
                     {currentUser.displayName} <span className="text-gray-400 font-normal">#{currentUser.shortId}</span>
-                  </p>
-                  <p className="text-[10px] text-gray-500 font-extrabold uppercase mt-1 leading-none">
-                    {currentUser.role === 'teacher' ? 'GIÁO VIÊN' : 'HỌC SINH'}
                   </p>
                 </div>
               </button>

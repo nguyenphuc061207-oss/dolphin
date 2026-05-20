@@ -1405,10 +1405,9 @@ return (
                                 {currentUser?.displayName ? currentUser.displayName.charAt(0).toUpperCase() : "G"}
                             </div>
                             <div className="hidden sm:block text-left">
-                                <p className="text-xs font-bold text-gray-900 leading-none">
+                                <p className="text-xs font-bold text-gray-900">
                                     {currentUser?.displayName} <span className="text-gray-400 font-medium">#{currentUser?.shortId}</span>
                                 </p>
-                                <p className="text-[10px] text-gray-500 font-extrabold uppercase mt-1 leading-none">GIÁO VIÊN</p>
                             </div>
                         </button>
 
