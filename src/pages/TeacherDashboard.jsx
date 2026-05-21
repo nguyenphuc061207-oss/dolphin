@@ -64,8 +64,9 @@ const isShortOptions = (options) => {
     if (!options || options.length === 0) return false;
     return options.every(opt => {
         if (!opt) return true;
-        const cleanText = opt.replace(/<[^>]+>/g, '').replace(/\$[^\$]+\$/g, '');
-        return cleanText.trim().length < 25;
+        if (opt.includes('[IMG:') || opt.includes('<img')) return false;
+        const cleanText = opt.replace(/<[^>]+>/g, '').replace(/\$/g, '');
+        return cleanText.trim().length < 35;
     });
 };
 
@@ -710,9 +711,11 @@ export default function TeacherDashboard() {
                     const rPr = firstChild(node, 'rPr');
                     const style = getRPrStyle(rPr);
 
+                    const hasVietnamese = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(raw);
+
                     if (style === 'bi') return `\\boldsymbol{${mapped}}`;
                     if (style === 'b') return `\\mathbf{${mapped}}`;
-                    if (style === 'p') return `\\text{${mapped}}`; // plain/roman text
+                    if (style === 'p' || hasVietnamese) return `\\text{${mapped}}`; // plain/roman text
                     // 'i' (italic) is the default math style — no wrapper needed
                     return mapped;
                 }
