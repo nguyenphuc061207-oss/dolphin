@@ -1129,6 +1129,30 @@ export default function TeacherDashboard() {
         }
 
         // ── Text thuần (bên trong w:r > w:t) ────────────────────────────
+        if (ns === NS_W && local === 'r') {
+            let isBold = false;
+            let isUnderline = false;
+            const rPr = Array.from(node.childNodes).find(n => n.localName === 'rPr');
+            if (rPr) {
+                const b = Array.from(rPr.childNodes).find(n => n.localName === 'b');
+                if (b) {
+                    const val = b.getAttribute('w:val');
+                    if (val !== '0' && val !== 'false') isBold = true;
+                }
+                const u = Array.from(rPr.childNodes).find(n => n.localName === 'u');
+                if (u) {
+                    const val = u.getAttribute('w:val');
+                    if (val !== 'none' && val !== '0' && val !== 'false') isUnderline = true;
+                }
+            }
+            let content = Array.from(node.childNodes).map(n => extractText(n, imageMap)).join('');
+            if (content.trim()) {
+                if (isBold) content = `<strong>${content}</strong>`;
+                else if (isUnderline) content = `<u>${content}</u>`;
+            }
+            return content;
+        }
+
         if (ns === NS_W && local === 't') {
             return node.textContent;
         }
@@ -1156,11 +1180,11 @@ export default function TeacherDashboard() {
             return Array.from(cells)
                 .map((cell) =>
                     Array.from(cell.getElementsByTagNameNS(NS_W, 'p'))
-                        .map(n => extractText(n, imageMap))
-                        .join(' ')
+                        .map(n => `<p>${extractText(n, imageMap)}</p>`)
+                        .join('')
                 )
-                .join('\t');
-        }).join('\n');
+                .join(' ');
+        }).join('<br/>');
     };
 
     // ════════════════════════════════════════════════════════════════════
@@ -1219,7 +1243,7 @@ export default function TeacherDashboard() {
             for (const node of body.childNodes) {
                 const local = node.localName;
                 if (local === 'p') {
-                    lines.push(extractText(node, imageMap));
+                    lines.push(`<p>${extractText(node, imageMap)}</p>`);
                 } else if (local === 'tbl') {
                     lines.push(extractTable(node, imageMap));
                 }
@@ -1227,8 +1251,8 @@ export default function TeacherDashboard() {
             }
 
             // 4. Gộp thành văn bản đầy đủ và parse câu hỏi
-            const fullText = lines.join('\n');
-            const parsed = parseQuestionsFromText(fullText);
+            const fullHtml = lines.join('\n');
+            const parsed = parseQuestionsFromHtml(fullHtml);
             if (parsed.length === 0)
                 throw new Error('Không tìm thấy câu hỏi nào trong file DOCX.');
 
