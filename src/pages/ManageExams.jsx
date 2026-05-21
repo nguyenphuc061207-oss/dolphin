@@ -264,15 +264,16 @@ export default function ManageExams() {
                                     <thead>
                                         <tr className="bg-gray-50 border-b border-gray-200">
                                             <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Tên đề thi</th>
+                                            <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Mã đề thi</th>
                                             <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Ngày tạo</th>
                                             <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Thao tác</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
                                         {isLoading ? (
-                                            <tr><td colSpan="3" className="p-8 text-center text-gray-500 font-medium">Đang tải dữ liệu...</td></tr>
+                                            <tr><td colSpan="4" className="p-8 text-center text-gray-500 font-medium">Đang tải dữ liệu...</td></tr>
                                         ) : filteredExams.length === 0 ? (
-                                             <tr><td colSpan="3" className="p-8 text-center text-gray-500 font-medium">Không tìm thấy đề thi nào.</td></tr>
+                                             <tr><td colSpan="4" className="p-8 text-center text-gray-500 font-medium">Không tìm thấy đề thi nào.</td></tr>
                                         ) : (
                                             filteredExams.map((exam) => (
                                                 <tr key={exam.id} className="hover:bg-blue-50/50 transition-colors group">
@@ -292,6 +293,19 @@ export default function ManageExams() {
                                                         <div className="flex gap-4 text-xs text-gray-500 font-medium">
                                                             <span className="flex items-center gap-1"><FileText className="w-3 h-3" /> {exam.questions?.length || 0} câu</span>
                                                             <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {exam.duration} phút</span>
+                                                        </div>
+                                                    </td>
+
+                                                    <td className="p-4">
+                                                        <div className="flex items-center gap-2">
+                                                            <code className="text-xs font-mono font-bold text-blue-600 bg-blue-50 border border-blue-100 px-2.5 py-1 rounded-lg select-all cursor-text">{exam.id}</code>
+                                                            <button 
+                                                                onClick={() => { navigator.clipboard.writeText(exam.id); }}
+                                                                className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded" 
+                                                                title="Sao chép mã đề thi"
+                                                            >
+                                                                <Copy className="w-3.5 h-3.5" />
+                                                            </button>
                                                         </div>
                                                     </td>
 

@@ -3,7 +3,7 @@ import { db } from "../firebase";
 import { collection, query, where, getDocs, doc, getDoc, updateDoc } from "firebase/firestore";
 import { useAuth } from "../contexts/AuthContext";
 import { Link, useNavigate } from "react-router-dom";
-import { RefreshCw, Trash2 } from "lucide-react";
+import { RefreshCw, Trash2, Search, ArrowRight } from "lucide-react";
 import useDocumentTitle from "../hooks/useDocumentTitle";
 
 export default function StudentDashboard() {
@@ -13,6 +13,43 @@ export default function StudentDashboard() {
   const [submissions, setSubmissions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [examLimits, setExamLimits] = useState({}); // {examId: attemptLimit}
+  const [examCode, setExamCode] = useState("");
+  const [joinLoading, setJoinLoading] = useState(false);
+  const [joinError, setJoinError] = useState("");
+
+  // Trích xuất examId từ link hoặc mã đề thi
+  const extractExamId = (input) => {
+    const trimmed = input.trim();
+    // Nếu là link dạng .../student/exam/EXAM_ID hoặc .../student/exam/EXAM_ID?...
+    const linkMatch = trimmed.match(/\/student\/exam\/([a-zA-Z0-9]+)/);
+    if (linkMatch) return linkMatch[1];
+    // Nếu chỉ là mã examId thuần (không chứa dấu / hay khoảng trắng)
+    if (/^[a-zA-Z0-9]+$/.test(trimmed) && trimmed.length >= 10) return trimmed;
+    return null;
+  };
+
+  const handleJoinExam = async () => {
+    setJoinError("");
+    const examId = extractExamId(examCode);
+    if (!examId) {
+      setJoinError("Mã bài thi hoặc link không hợp lệ. Vui lòng kiểm tra lại.");
+      return;
+    }
+    setJoinLoading(true);
+    try {
+      const examSnap = await getDoc(doc(db, "exams", examId));
+      if (examSnap.exists()) {
+        navigate(`/student/exam/${examId}`);
+      } else {
+        setJoinError("Không tìm thấy bài thi với mã này. Vui lòng kiểm tra lại.");
+      }
+    } catch (error) {
+      console.error("Lỗi khi tìm bài thi:", error);
+      setJoinError("Đã xảy ra lỗi khi tìm bài thi. Vui lòng thử lại.");
+    } finally {
+      setJoinLoading(false);
+    }
+  };
 
   // Fetch submissions and exam limits
   useEffect(() => {
@@ -108,11 +145,52 @@ export default function StudentDashboard() {
   return (
     <div className="w-full max-w-5xl mx-auto px-6 py-10">
       <div className="mb-8">
-        <h2 className="text-3xl font-black text-gray-900 tracking-tight">Lịch sử học tập</h2>
+        <h2 className="text-3xl font-black text-gray-900 tracking-tight">Bảng điều khiển</h2>
         <p className="text-gray-500 font-medium mt-1">Chào mừng quay trở lại, {currentUser?.displayName}!</p>
       </div>
 
-      {submissions.length === 0 ? (
+      {/* Phần tham gia bài thi */}
+      <div className="mb-8 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl border border-blue-100 p-6">
+        <div className="flex items-center gap-2 mb-3">
+          <Search className="w-5 h-5 text-blue-600" />
+          <h3 className="text-lg font-bold text-gray-900">Tham gia bài thi</h3>
+        </div>
+        <p className="text-sm text-gray-500 mb-4">Dán link bài thi hoặc nhập mã đề thi mà giáo viên đã gửi cho bạn.</p>
+        <div className="flex gap-3">
+          <input
+            type="text"
+            value={examCode}
+            onChange={(e) => { setExamCode(e.target.value); setJoinError(""); }}
+            onKeyDown={(e) => e.key === "Enter" && examCode.trim() && handleJoinExam()}
+            placeholder="Dán link bài thi hoặc nhập mã đề thi..."
+            className="flex-1 px-4 py-3 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm font-medium text-gray-900 placeholder:text-gray-400 shadow-sm"
+          />
+          <button
+            onClick={handleJoinExam}
+            disabled={!examCode.trim() || joinLoading}
+            className={`px-6 py-3 rounded-xl font-bold text-sm flex items-center gap-2 transition-all shadow-sm ${
+              !examCode.trim() || joinLoading
+                ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                : "bg-blue-600 hover:bg-blue-700 active:scale-95 text-white"
+            }`}
+          >
+            {joinLoading ? (
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <ArrowRight className="w-4 h-4" />
+            )}
+            {joinLoading ? "Đang tìm..." : "Vào thi"}
+          </button>
+        </div>
+        {joinError && (
+          <p className="mt-3 text-sm text-red-600 font-medium">{joinError}</p>
+        )}
+      </div>
+
+      {/* Lịch sử học tập */}
+      <div className="mb-4">
+        <h3 className="text-xl font-bold text-gray-900">Lịch sử học tập</h3>
+      </div>      {submissions.length === 0 ? (
         <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-gray-200 shadow-sm">
           <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4">
              <RefreshCw className="w-10 h-10 text-gray-300" />

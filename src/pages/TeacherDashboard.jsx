@@ -2076,7 +2076,13 @@ return (
                         <div className="space-y-4">
                             {examsList.map((exam) => (
                                 <div key={exam.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition group">
-                                    <h4 className="font-bold text-gray-900 mb-3 group-hover:text-blue-600 transition-colors line-clamp-2">{exam.title}</h4>
+                                    <h4 className="font-bold text-gray-900 mb-1 group-hover:text-blue-600 transition-colors line-clamp-2">{exam.title}</h4>
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <span className="text-[10px] font-mono font-bold text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md select-all cursor-text" title="Mã đề thi">{exam.id}</span>
+                                        <button onClick={() => { navigator.clipboard.writeText(exam.id); }} className="text-[10px] text-gray-400 hover:text-blue-600 transition-colors" title="Sao chép mã đề thi">
+                                            <Copy className="w-3 h-3" />
+                                        </button>
+                                    </div>
                                     <div className="flex gap-4 text-[11px] text-gray-400 font-bold mb-4">
                                         <span className="flex items-center gap-1"><BookOpen className="w-3 h-3" /> {exam.questions?.length || 0} câu</span>
                                         <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {exam.duration}p</span>

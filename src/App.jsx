@@ -15,6 +15,8 @@ import StudentDashboard from "./pages/StudentDashboard";
 import ExamSubmissions from "./pages/ExamSubmissions";
 import TakeExam from "./pages/TakeExam";
 import ReviewExam from "./pages/ReviewExam";
+import DocumentModal from "./components/DocumentModal";
+import { footerDocuments } from "./constants/footerContent";
 
 function Navigation() {
   const { currentUser } = useAuth();
@@ -106,6 +108,13 @@ function Navigation() {
 
 function HomePage() {
   useDocumentTitle("Dolphin - Hệ thống quản lý thi thông minh");
+  const [activeDoc, setActiveDoc] = useState(null);
+
+  const handleOpenDoc = (e, docKey) => {
+    e.preventDefault();
+    setActiveDoc(docKey);
+  };
+
   return (
     <div className="w-full">
       {/* Hero Section */}
@@ -186,15 +195,26 @@ function HomePage() {
 
       {/* Footer */}
       <footer className="py-12 px-6 bg-white">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6 border-t border-gray-100 pt-8">
-          <p className="text-gray-400 text-sm font-medium">© 2026 Dolphin. Tất cả quyền được bảo lưu.</p>
-          <div className="flex gap-8 text-sm font-semibold text-gray-400">
-            <a href="#" className="hover:text-blue-600 transition">Điều khoản</a>
-            <a href="#" className="hover:text-blue-600 transition">Bảo mật</a>
-            <a href="#" className="hover:text-blue-600 transition">Liên hệ</a>
+        <div className="max-w-7xl mx-auto flex flex-col items-center justify-center gap-6 border-t border-gray-100 pt-8">
+          <div className="flex flex-wrap justify-center gap-6 md:gap-10 text-sm font-medium text-gray-500">
+            <a href="#terms" onClick={(e) => handleOpenDoc(e, 'terms')} className="hover:text-blue-600 transition">Điều khoản dịch vụ</a>
+            <a href="#privacy" onClick={(e) => handleOpenDoc(e, 'privacy')} className="hover:text-blue-600 transition">Chính sách bảo mật</a>
+            <a href="#guide" onClick={(e) => handleOpenDoc(e, 'guide')} className="hover:text-blue-600 transition">Hướng dẫn sử dụng</a>
+            <a href="#support" onClick={(e) => handleOpenDoc(e, 'support')} className="hover:text-blue-600 transition">Hỗ trợ khách hàng</a>
+            <a href="https://zalo.me/0564213425" target="_blank" rel="noreferrer" className="hover:text-blue-600 transition text-blue-600 font-semibold">
+              Liên hệ Zalo: 0564213425
+            </a>
           </div>
         </div>
       </footer>
+
+      {/* Document Modal */}
+      <DocumentModal 
+        isOpen={!!activeDoc} 
+        onClose={() => setActiveDoc(null)} 
+        title={activeDoc ? footerDocuments[activeDoc].title : ''}
+        content={activeDoc ? footerDocuments[activeDoc].content : null}
+      />
     </div>
   );
 }
