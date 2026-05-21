@@ -38,8 +38,9 @@ function isShortOptions(options) {
     if (!options || options.length === 0) return false;
     return options.every(opt => {
         if (!opt) return true;
-        const cleanText = opt.replace(/<[^>]+>/g, '').replace(/\$[^\$]+\$/g, '');
-        return cleanText.trim().length < 25;
+        if (opt.includes('[IMG:') || opt.includes('<img')) return false;
+        const cleanText = opt.replace(/<[^>]+>/g, '').replace(/\$/g, '');
+        return cleanText.trim().length < 35;
     });
 }
 
