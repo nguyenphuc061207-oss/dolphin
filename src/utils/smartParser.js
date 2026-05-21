@@ -66,7 +66,7 @@ class NumberingDictionary {
     }
 }
 
-function extractTextFromParagraph(pNode) {
+function extractTextFromParagraph(pNode, imageMap) {
     let text = '';
     const ts = pNode.getElementsByTagNameNS('*', '*');
     for (const t of ts) {
@@ -74,6 +74,16 @@ function extractTextFromParagraph(pNode) {
             text += t.textContent;
         } else if (t.localName === 'tab') {
             text += '\t';
+        } else if (t.localName === 'blip') {
+            const rId = t.getAttribute('r:embed');
+            if (rId && imageMap && imageMap.has(rId)) {
+                text += `<img src="${imageMap.get(rId)}" style="max-width: 100%; height: auto; margin-top: 5px; margin-bottom: 5px;" />`;
+            }
+        } else if (t.localName === 'imagedata') {
+            const rId = t.getAttribute('r:id');
+            if (rId && imageMap && imageMap.has(rId)) {
+                text += `<img src="${imageMap.get(rId)}" style="max-width: 100%; height: auto; margin-top: 5px; margin-bottom: 5px;" />`;
+            }
         }
     }
     return text;
@@ -90,6 +100,35 @@ export async function parseSmartExam(docxBuffer) {
         const numXmlStr = await zip.file('word/numbering.xml')?.async('string');
         const numberingDict = new NumberingDictionary(numXmlStr);
         
+        const relsXmlStr = await zip.file('word/_rels/document.xml.rels')?.async('string');
+        const imageMap = new Map();
+        if (relsXmlStr) {
+            const relsDoc = new DOMParser().parseFromString(relsXmlStr, 'application/xml');
+            for (const rel of relsDoc.getElementsByTagNameNS('*', 'Relationship')) {
+                const rId = rel.getAttribute('Id');
+                const target = rel.getAttribute('Target');
+                if (target) {
+                    let imgPath = target;
+                    if (target.startsWith('/word/')) imgPath = target.substring(1);
+                    else if (target.startsWith('media/')) imgPath = 'word/' + target;
+                    
+                    if (imgPath.startsWith('word/media/')) {
+                        const file = zip.file(imgPath);
+                        if (file) {
+                            const base64 = await file.async('base64');
+                            const ext = target.split('.').pop().toLowerCase();
+                            const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' 
+                                       : ext === 'png' ? 'image/png' 
+                                       : ext === 'gif' ? 'image/gif' 
+                                       : ext === 'svg' ? 'image/svg+xml' 
+                                       : 'image/png';
+                            imageMap.set(rId, `data:${mime};base64,${base64}`);
+                        }
+                    }
+                }
+            }
+        }
+
         const docXml = new DOMParser().parseFromString(docXmlStr, 'application/xml');
         
         // Core: Process OMML math blocks into w:t text nodes naturally embedded in OOXML DOM
@@ -117,7 +156,7 @@ export async function parseSmartExam(docxBuffer) {
                     }
                 }
                 
-                let pText = extractTextFromParagraph(el);
+                let pText = extractTextFromParagraph(el, imageMap);
                 if (pText.trim() !== '') {
                     paragraphs.push(prefix + pText);
                 }
@@ -129,7 +168,7 @@ export async function parseSmartExam(docxBuffer) {
                     for (const tc of tcs) {
                         const tcPs = tc.getElementsByTagNameNS('*', 'p');
                         for (const tcp of tcPs) {
-                            let pText = extractTextFromParagraph(tcp);
+                            let pText = extractTextFromParagraph(tcp, imageMap);
                             if (pText.trim() !== '') paragraphs.push(pText);
                         }
                     }

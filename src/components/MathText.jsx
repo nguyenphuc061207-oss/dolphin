@@ -147,8 +147,8 @@ function hasBareUnicode(text) {
 function tokenizeMath(text) {
   if (!text) return [];
   const tokens = [];
-  // Match $$...$$ (block) first, then $...$ (inline)
-  const regex = /(\$\$[\s\S]*?\$\$|\$[^$\n]*?\$)/g;
+  // Match $$...$$ (block), $...$ (inline), and [IMG: ...] (image)
+  const regex = /(\$\$[\s\S]*?\$\$|\$[^$\n]*?\$|\[IMG:\s*data:[^\]]+\])/g;
   let lastIndex = 0;
   let match;
 
@@ -160,6 +160,8 @@ function tokenizeMath(text) {
     const raw = match[0];
     if (raw.startsWith('$$')) {
       tokens.push({ type: 'block', content: raw.slice(2, -2) });
+    } else if (raw.startsWith('[IMG:')) {
+      tokens.push({ type: 'image', content: raw.slice(5, -1).trim() });
     } else {
       tokens.push({ type: 'inline', content: raw.slice(1, -1) });
     }
@@ -219,18 +221,36 @@ export default function MathText({ text, className = '' }) {
   processed = normalizeUnicodeToLatex(processed);
   
   // Safe Check: If MathJax is loaded on the client-side, let MathJax handle the rendering beautifully!
-  // We return the raw string containing $ and $$ delimiters, which MathJax will typeset.
+  // We must still parse out our [IMG: ...] tokens and render them as actual <img> tags.
   if (typeof window !== 'undefined' && window.MathJax) {
-    return <span className={`math-text ${className}`}>{processed}</span>;
+    const parts = processed.split(/(\[IMG:\s*data:[^\]]+\])/g);
+    return (
+      <span className={`math-text ${className}`}>
+        {parts.map((part, i) => {
+          if (part.startsWith('[IMG:')) {
+            const src = part.slice(5, -1).trim();
+            return (
+              <img 
+                key={i} 
+                src={src} 
+                alt="Embedded from docx" 
+                style={{ maxWidth: '100%', height: 'auto', display: 'inline-block', margin: '0 5px', verticalAlign: 'middle' }} 
+              />
+            );
+          }
+          return <span key={i}>{part}</span>;
+        })}
+      </span>
+    );
   }
   
   // Fallback to KaTeX (react-katex) if MathJax is not available (e.g. locally or during build)
   // 3. Tokenize and render
   const tokens = tokenizeMath(processed);
 
-  // If no math tokens, render as plain text
-  const hasMath = tokens.some(t => t.type === 'inline' || t.type === 'block');
-  if (!hasMath) {
+  // If no math tokens or image tokens, render as plain text
+  const hasSpecial = tokens.some(t => t.type === 'inline' || t.type === 'block' || t.type === 'image');
+  if (!hasSpecial) {
     return <span className={className}>{text}</span>;
   }
 
@@ -247,6 +267,16 @@ export default function MathText({ text, className = '' }) {
                 <BlockMath math={token.content} />
               </MathErrorBoundary>
             </span>
+          );
+        }
+        if (token.type === 'image') {
+          return (
+            <img 
+              key={i} 
+              src={token.content} 
+              alt="Embedded from docx" 
+              style={{ maxWidth: '100%', height: 'auto', display: 'inline-block', margin: '0 5px', verticalAlign: 'middle' }} 
+            />
           );
         }
         // inline

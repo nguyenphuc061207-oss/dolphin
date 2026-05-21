@@ -1104,7 +1104,7 @@ export default function TeacherDashboard() {
      * Duyệt đệ quy toàn bộ node, trả về chuỗi văn bản thuần + LaTeX cho math.
      * Giữ đúng thứ tự inline: "Phương trình $x^2+1=0$ có nghiệm phức."
      */
-    const extractText = (node) => {
+    const extractText = (node, imageMap) => {
         if (!node) return '';
 
         const ns = node.namespaceURI;
@@ -1113,6 +1113,19 @@ export default function TeacherDashboard() {
         // ── Math block → LaTeX ──────────────────────────────────────────
         if (ns === NS_M && (local === 'oMath' || local === 'oMathPara')) {
             return toLatex(node);
+        }
+
+        // ── Hình ảnh ────────────────────────────────────────────────────
+        if (local === 'blip') {
+            const rId = node.getAttribute('r:embed') || node.getAttribute('embed');
+            if (rId && imageMap && imageMap.has(rId)) {
+                return `[IMG: ${imageMap.get(rId)}]`;
+            }
+        } else if (local === 'imagedata') {
+            const rId = node.getAttribute('r:id') || node.getAttribute('id');
+            if (rId && imageMap && imageMap.has(rId)) {
+                return `[IMG: ${imageMap.get(rId)}]`;
+            }
         }
 
         // ── Text thuần (bên trong w:r > w:t) ────────────────────────────
@@ -1132,18 +1145,18 @@ export default function TeacherDashboard() {
         if (ns === NS_W && SKIP.includes(local)) return '';
 
         // ── Đệ quy vào tất cả con còn lại ───────────────────────────────
-        return Array.from(node.childNodes).map(extractText).join('');
+        return Array.from(node.childNodes).map(n => extractText(n, imageMap)).join('');
     };
 
     // ── Xử lý bảng: mỗi hàng thành một dòng, các ô ngăn bằng tab ────────
-    const extractTable = (tblNode) => {
+    const extractTable = (tblNode, imageMap) => {
         const rows = tblNode.getElementsByTagNameNS(NS_W, 'tr');
         return Array.from(rows).map((row) => {
             const cells = row.getElementsByTagNameNS(NS_W, 'tc');
             return Array.from(cells)
                 .map((cell) =>
                     Array.from(cell.getElementsByTagNameNS(NS_W, 'p'))
-                        .map(extractText)
+                        .map(n => extractText(n, imageMap))
                         .join(' ')
                 )
                 .join('\t');
@@ -1163,6 +1176,36 @@ export default function TeacherDashboard() {
             const docXml = await zip.file('word/document.xml')?.async('string');
             if (!docXml) throw new Error('Không đọc được nội dung file DOCX.');
 
+            // 1.5 Load images
+            const relsXmlStr = await zip.file('word/_rels/document.xml.rels')?.async('string');
+            const imageMap = new Map();
+            if (relsXmlStr) {
+                const relsDoc = new DOMParser().parseFromString(relsXmlStr, 'application/xml');
+                for (const rel of relsDoc.getElementsByTagNameNS('*', 'Relationship')) {
+                    const rId = rel.getAttribute('Id');
+                    const target = rel.getAttribute('Target');
+                    if (target) {
+                        let imgPath = target;
+                        if (target.startsWith('/word/')) imgPath = target.substring(1);
+                        else if (target.startsWith('media/')) imgPath = 'word/' + target;
+                        
+                        if (imgPath.startsWith('word/media/')) {
+                            const imgFile = zip.file(imgPath);
+                            if (imgFile) {
+                                const base64 = await imgFile.async('base64');
+                                const extImg = target.split('.').pop().toLowerCase();
+                                const mime = extImg === 'jpg' || extImg === 'jpeg' ? 'image/jpeg' 
+                                           : extImg === 'png' ? 'image/png' 
+                                           : extImg === 'gif' ? 'image/gif' 
+                                           : extImg === 'svg' ? 'image/svg+xml' 
+                                           : 'image/png';
+                                imageMap.set(rId, `data:${mime};base64,${base64}`);
+                            }
+                        }
+                    }
+                }
+            }
+
             // 2. Parse XML
             const xmlDoc = new DOMParser().parseFromString(docXml, 'application/xml');
             const parseError = xmlDoc.querySelector('parsererror');
@@ -1176,9 +1219,9 @@ export default function TeacherDashboard() {
             for (const node of body.childNodes) {
                 const local = node.localName;
                 if (local === 'p') {
-                    lines.push(extractText(node));
+                    lines.push(extractText(node, imageMap));
                 } else if (local === 'tbl') {
-                    lines.push(extractTable(node));
+                    lines.push(extractTable(node, imageMap));
                 }
                 // Bỏ qua sectPr và các node khác
             }
