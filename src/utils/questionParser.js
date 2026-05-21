@@ -113,32 +113,65 @@ const MIN_KEY_ENTRIES = 3;
  */
 function extractAnswerKeyTable(text) {
     const keyMap = new Map();
+    let tableStartIndex = -1;
 
     // Try to isolate a dedicated section that starts with a header keyword
-    const sectionMatch = text.match(
-        /(?:đáp\s*án|answer\s*key|bảng\s*đáp\s*án)\s*[:\.\n]([\s\S]*)/i
-    );
-    const scanText = sectionMatch ? sectionMatch[1] : text;
+    const headerRegex = /(?:\n|^)\s*(?:(?:bảng\s*)?đáp\s*án(?:\s*(?:chi\s*tiết|trắc\s*nghiệm|tham\s*khảo|chuẩn))?|answer\s*key)\s*[:.]?\s*(?=\n|$)/gim;
+    const headers = [...text.matchAll(headerRegex)];
 
     // v3: separator list is explicit (-, –, ., :) — bare space removed to cut noise
     const regex = /(?:câu\s*)?(\d+)\s*[-–.:]\s*([A-Za-z](?:\s*[,/]\s*[A-Za-z])*)\b/g;
-    let m;
-    while ((m = regex.exec(scanText)) !== null) {
-        const qNum = parseInt(m[1], 10);
-        const letters = m[2].split(/[\s,/]+/).map(l => l.trim()).filter(Boolean);
-        if (qNum > 0 && letters.length > 0) {
-            const indices = letters.map(letterToIndex).filter(i => i >= 0);
-            if (indices.length === 1) keyMap.set(qNum, indices[0]);
-            else if (indices.length > 1) keyMap.set(qNum, indices);
+
+    let foundSection = false;
+
+    for (let i = headers.length - 1; i >= 0; i--) {
+        const h = headers[i];
+        const matchStart = h.index + (h[0].startsWith('\n') ? 1 : 0);
+        const subText = text.slice(matchStart);
+        
+        let m;
+        let localMap = new Map();
+        regex.lastIndex = 0;
+        while ((m = regex.exec(subText)) !== null) {
+            const qNum = parseInt(m[1], 10);
+            const letters = m[2].split(/[\s,/]+/).map(l => l.trim()).filter(Boolean);
+            if (qNum > 0 && letters.length > 0) {
+                const indices = letters.map(letterToIndex).filter(idx => idx >= 0);
+                if (indices.length > 0) {
+                    localMap.set(qNum, indices.length === 1 ? indices[0] : indices);
+                }
+            }
+        }
+        
+        if (localMap.size >= MIN_KEY_ENTRIES) {
+            keyMap.clear();
+            for (const [k, v] of localMap.entries()) keyMap.set(k, v);
+            tableStartIndex = matchStart;
+            foundSection = true;
+            break;
         }
     }
 
-    // If we didn't find a dedicated section, enforce the minimum-cluster threshold
-    if (!sectionMatch && keyMap.size < MIN_KEY_ENTRIES) {
-        keyMap.clear();
+    // If we didn't find a dedicated section, search the whole text
+    if (!foundSection) {
+        regex.lastIndex = 0;
+        let m;
+        while ((m = regex.exec(text)) !== null) {
+            const qNum = parseInt(m[1], 10);
+            const letters = m[2].split(/[\s,/]+/).map(l => l.trim()).filter(Boolean);
+            if (qNum > 0 && letters.length > 0) {
+                const indices = letters.map(letterToIndex).filter(idx => idx >= 0);
+                if (indices.length > 0) {
+                    keyMap.set(qNum, indices.length === 1 ? indices[0] : indices);
+                }
+            }
+        }
+        if (keyMap.size < MIN_KEY_ENTRIES) {
+            keyMap.clear();
+        }
     }
 
-    return keyMap;
+    return { keyMap, tableStartIndex };
 }
 
 // ─────────────────────────────────────────────
@@ -243,6 +276,8 @@ function parseAnswerLine(line) {
 // Question-start line detection
 // ─────────────────────────────────────────────
 
+const IS_ONLY_KEYS_REGEX = /^(?:\s*(?:câu\s*)?\d+\s*[-–.:]\s*[A-Za-z](?:\s*[,/]\s*[A-Za-z])*\s*[,;]*\s*)+$/i;
+
 /** Named prefix: "Câu 1.", "Câu 1:", "Question 2)", "Q3." */
 const QUESTION_NAMED_REGEX = /^(?:câu|question|q\.?)\s*(\d+)\s*[.:)]\s*(.*)/i;
 
@@ -254,6 +289,8 @@ const QUESTION_NAMED_REGEX = /^(?:câu|question|q\.?)\s*(\d+)\s*[.:)]\s*(.*)/i;
 const QUESTION_NUM_ONLY = /^(\d+)[.)]\s+(.*)/;
 
 function parseQuestionStart(line) {
+    if (IS_ONLY_KEYS_REGEX.test(line)) return null;
+
     const clean = line.trim().replace(/^\uFEFF/, ''); // strip BOM
     let m = clean.match(QUESTION_NAMED_REGEX);
     if (m) return { num: parseInt(m[1], 10), content: m[2].trim() };
@@ -379,8 +416,13 @@ function applyAnswerKeyTable(blocks, keyMap) {
 export function parseQuestionsFromText(text) {
     if (!text?.trim()) return [];
 
+    let { keyMap: answerKeyTable, tableStartIndex } = extractAnswerKeyTable(text);
+
+    if (tableStartIndex !== -1) {
+        text = text.slice(0, tableStartIndex);
+    }
+
     const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    const answerKeyTable = extractAnswerKeyTable(text);
 
     const blocks = [];
     let cur = null;
@@ -415,6 +457,10 @@ export function parseQuestionsFromText(text) {
         }
 
         // ── Continuation line ──────────────────────────────────────────────────
+        if (IS_ONLY_KEYS_REGEX.test(line)) {
+            return;
+        }
+
         if (lastOptionIndex >= 0 && cur.options[lastOptionIndex] !== undefined) {
             // Append to the most recently parsed option
             cur.options[lastOptionIndex] += '\n' + line;
@@ -516,7 +562,22 @@ export function parseQuestionsFromHtml(html) {
     }
     
     const plainText = textLines.join('\n');
-    const answerKeyTable = extractAnswerKeyTable(plainText);
+    const { keyMap: answerKeyTable, tableStartIndex } = extractAnswerKeyTable(plainText);
+
+    if (tableStartIndex !== -1) {
+        let currentLength = 0;
+        let truncateLineIdx = textLines.length;
+        for (let i = 0; i < textLines.length; i++) {
+            if (currentLength >= tableStartIndex) {
+                truncateLineIdx = i;
+                break;
+            }
+            currentLength += textLines[i].length + 1;
+        }
+        
+        textLines.splice(truncateLineIdx);
+        processedHtmlLines.splice(truncateLineIdx);
+    }
 
     const blocks = [];
     let cur = null;
@@ -567,6 +628,10 @@ export function parseQuestionsFromHtml(html) {
         }
 
         // ── Continuation line ──────────────────────────────────────────────────
+        if (IS_ONLY_KEYS_REGEX.test(line)) {
+            continue;
+        }
+
         if (lastOptionIndex >= 0 && cur.options[lastOptionIndex] !== undefined) {
             cur.options[lastOptionIndex] += '\n' + line;
             cur.optionsHtml[lastOptionIndex] += '<br/>' + rawHtml;
