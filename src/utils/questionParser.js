@@ -211,10 +211,11 @@ function parseOptionLine(line) {
 export function parseMultiTrueFalseAnswer(text) {
     const clean = text.trim();
     // Match option letter and value: e.g. "a-Đúng", "B: Sai", "c) Đ", "d. S"
-    const pairRegex = /([a-zA-Z])\s*[-.:)]\s*([đđĐDsS][úuúnnggai]*|[tTfF][rRuUeEaAlLsSeE]*)\b/gi;
+    const pairRegex = /([a-zA-Z])\s*[-.:)]\s*([đđĐDsS][úuúnnggai]*|[tTfF][rRuUeEaAlLsSeE]*)(?:\s|$|[,;.])/gi;
     
     const matches = [...clean.matchAll(pairRegex)];
-    if (matches.length === 0) return null;
+    // Require at least 2 matches to prevent single MCQ answers like "A. Đúng" from being misidentified
+    if (matches.length < 2) return null;
     
     const result = [];
     let maxIndex = -1;
@@ -247,7 +248,7 @@ export function parseMultiTrueFalseAnswer(text) {
  *     inside a longer sentence does not produce a spurious answer.
  */
 const ANSWER_LINE_REGEX =
-    /^(?:đáp\s*án(?:\s*đúng)?|key|chọn|answer)\s*[:.]?\s*([A-Za-z](?:\s*[,/]\s*[A-Za-z])*)\s*[.]?\s*$/i;
+    /^(?:đáp\s*án(?:\s*đúng)?|key|chọn|answer)\s*[:.]?\s*([A-Za-z](?:\s*[,/]\s*[A-Za-z])*)\s*[.]?(?:\s*(?:đúng|sai))?\s*$/i;
 
 /** Returns a single index, an array of indices, an array of T/F booleans, or -1 if line is not an answer line. */
 function parseAnswerLine(line) {
@@ -478,7 +479,7 @@ export function parseQuestionsFromText(text) {
             const after = embeddedMatch[3].trim();
             
             const cleanAfter = after.replace(/[.\s]+$/, '');
-            const isStandardAns = /^[A-Za-z](?:\s*[,/]\s*[A-Za-z])*\s*$/i.test(cleanAfter);
+            const isStandardAns = /^[A-Za-z](?:\s*[,/]\s*[A-Za-z])*(?:\s*(?:đúng|sai))?\s*$/i.test(cleanAfter);
             const isMultiTFAns = parseMultiTrueFalseAnswer(cleanAfter) !== null;
             
             if (isStandardAns || isMultiTFAns) {
@@ -544,7 +545,7 @@ export function parseQuestionsFromHtml(html) {
             const after = embeddedMatch[3].trim();
             
             const cleanAfter = after.replace(/[.\s]+$/, '');
-            const isStandardAns = /^[A-Za-z](?:\s*[,/]\s*[A-Za-z])*\s*$/i.test(cleanAfter);
+            const isStandardAns = /^[A-Za-z](?:\s*[,/]\s*[A-Za-z])*(?:\s*(?:đúng|sai))?\s*$/i.test(cleanAfter);
             const isMultiTFAns = parseMultiTrueFalseAnswer(cleanAfter) !== null;
             
             if (isStandardAns || isMultiTFAns) {
