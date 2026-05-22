@@ -224,11 +224,12 @@ function AppContent() {
   const location = useLocation();
   // Kiểm tra xem URL hiện tại có bắt đầu bằng /teacher không
   const isTeacherPage = location.pathname.startsWith("/teacher");
+  const isTakeExamPage = location.pathname.startsWith("/student/exam/");
 
   return (
     <div className="min-h-screen bg-white flex flex-col">
-      {/* Ẩn Navbar chung nếu đang ở trong các trang của giáo viên */}
-      {!isTeacherPage && <Navigation />}
+      {/* Ẩn Navbar chung nếu đang ở trong các trang của giáo viên hoặc làm bài thi */}
+      {!isTeacherPage && !isTakeExamPage && <Navigation />}
 
       <main className="flex-1">
         <Routes>

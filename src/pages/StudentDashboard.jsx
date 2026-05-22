@@ -276,6 +276,19 @@ export default function StudentDashboard() {
                               </Link>
                           )}
                           <button
+                            onClick={() => navigate(`/student/exam/${sub.examId}`)}
+                            disabled={isLimitReached}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                                isLimitReached
+                                    ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                                    : "bg-blue-50 text-blue-600 hover:bg-blue-100"
+                            }`}
+                            title={isLimitReached ? "Hết lượt làm bài" : "Làm lại đề thi"}
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">{isLimitReached ? "Hết lượt" : "Làm lại"}</span>
+                          </button>
+                          <button
                             onClick={() => handleDeleteSubmission(sub.id)}
                             className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                             title="Xóa lịch sử"

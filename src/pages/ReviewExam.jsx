@@ -178,20 +178,6 @@ export default function ReviewExam() {
                                 <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1">Điểm số</p>
                                 <p className="text-3xl font-black text-emerald-700">{submission.score}</p>
                             </div>
-                            {examInfo && (
-                                <button
-                                    onClick={() => navigate(`/student/exam/${submission.examId}`)}
-                                    disabled={examInfo.attemptLimit > 0 && submissionCount >= examInfo.attemptLimit}
-                                    className={`flex items-center gap-2 px-6 py-4 rounded-2xl font-black text-sm transition-all shadow-lg ${
-                                        examInfo.attemptLimit > 0 && submissionCount >= examInfo.attemptLimit
-                                            ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                                            : "bg-blue-600 text-white hover:bg-blue-700 shadow-blue-200 active:scale-95"
-                                    }`}
-                                >
-                                    <RefreshCw className="w-5 h-5" />
-                                    {examInfo.attemptLimit > 0 && submissionCount >= examInfo.attemptLimit ? "HẾT LƯỢT" : "LÀM LẠI"}
-                                </button>
-                            )}
                         </div>
                     </div>
                 </div>
