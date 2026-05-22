@@ -6,7 +6,7 @@ import { Link } from "react-router-dom";
 import { signOut } from "firebase/auth";
 import {
     LayoutDashboard, BookOpen, LogOut,
-    Search, BarChart3, Copy, Trash2, Clock, FileText, Shield, KeyRound, X, UserPlus, Plus, Users
+    Search, BarChart3, Copy, Trash2, Clock, FileText, Shield, KeyRound, X, UserPlus, Plus, Users, Eye
 } from 'lucide-react';
 
 export default function ManageExams() {
@@ -25,6 +25,12 @@ export default function ManageExams() {
     const [isSavingAccess, setIsSavingAccess] = useState(false);
     const [friendsList, setFriendsList] = useState([]);
     const [isProfileOpen, setIsProfileOpen] = useState(false);
+
+    // Các state liên quan đến cấu hình Xem lại bài thi
+    const [selectedExamForReview, setSelectedExamForReview] = useState(null);
+    const [modalReviewMode, setModalReviewMode] = useState('always');
+    const [modalReviewTime, setModalReviewTime] = useState('');
+    const [isSavingReview, setIsSavingReview] = useState(false);
 
     const handleLogout = async () => {
         try {
@@ -138,6 +144,36 @@ export default function ManageExams() {
             alert("Lỗi khi cập nhật quyền truy cập.");
         }
         setIsSavingAccess(false);
+    };
+
+    // Điều khiển modal chỉnh sửa chế độ xem lại bài thi
+    const handleOpenReviewModal = (exam) => {
+        setSelectedExamForReview(exam);
+        const mode = exam.reviewSettings?.mode || 'always';
+        const time = exam.reviewSettings?.time || '';
+        setModalReviewMode(mode);
+        setModalReviewTime(time);
+    };
+
+    const handleSaveReviewSettings = async () => {
+        if (!selectedExamForReview) return;
+        setIsSavingReview(true);
+        try {
+            const examRef = doc(db, "exams", selectedExamForReview.id);
+            await updateDoc(examRef, {
+                reviewSettings: { 
+                    mode: modalReviewMode, 
+                    time: modalReviewMode === 'after_time' ? modalReviewTime : null 
+                }
+            });
+            alert("Cập nhật cấu hình xem lại bài thi thành công!");
+            setSelectedExamForReview(null);
+            fetchExams();
+        } catch (e) {
+            console.error(e);
+            alert("Lỗi khi cập nhật cấu hình.");
+        }
+        setIsSavingReview(false);
     };
 
     // Thuật toán tìm kiếm Real-time
@@ -315,6 +351,13 @@ export default function ManageExams() {
                                                     <td className="p-4">
                                                         <div className="flex justify-end gap-2 transition-opacity">
                                                             <button 
+                                                                onClick={() => handleOpenReviewModal(exam)} 
+                                                                className="p-2 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" 
+                                                                title="Cấu hình xem lại"
+                                                            >
+                                                                <Eye className="w-5 h-5" />
+                                                            </button>
+                                                            <button 
                                                                 onClick={() => handleOpenAccessModal(exam)} 
                                                                 className="p-2 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors" 
                                                                 title="Quyền truy cập"
@@ -485,6 +528,69 @@ export default function ManageExams() {
                                 className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm transition disabled:opacity-50"
                             >
                                 {isSavingAccess ? "Đang lưu..." : "Lưu thay đổi"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal chỉnh sửa Cấu hình Xem lại bài thi */}
+            {selectedExamForReview && (
+                <div className="fixed inset-0 bg-black/55 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-200 text-left">
+                    <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-gray-150 animate-in zoom-in-95 duration-200">
+                        <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                            <div className="flex items-center gap-2">
+                                <Eye className="w-5 h-5 text-emerald-600 animate-pulse" />
+                                <h3 className="font-extrabold text-gray-900 text-lg">Cấu hình Xem lại bài thi</h3>
+                            </div>
+                            <button onClick={() => setSelectedExamForReview(null)} className="p-1.5 hover:bg-gray-150 rounded-lg text-gray-400 hover:text-gray-700 transition">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+                        <div className="p-6 space-y-6">
+                            <div>
+                                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Đề thi</p>
+                                <p className="text-base font-bold text-gray-900">{selectedExamForReview.title}</p>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Chế độ xem lại</label>
+                                <select
+                                    value={modalReviewMode}
+                                    onChange={(e) => setModalReviewMode(e.target.value)}
+                                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition text-sm font-semibold cursor-pointer"
+                                >
+                                    <option value="always">Luôn cho phép (Ngay sau khi nộp)</option>
+                                    <option value="never">Không bao giờ cho phép</option>
+                                    <option value="after_time">Mở sau một thời gian cụ thể</option>
+                                </select>
+                            </div>
+
+                            {modalReviewMode === 'after_time' && (
+                                <div className="p-4 bg-emerald-50/50 border border-emerald-200 rounded-2xl animate-in slide-in-from-top-2 duration-200">
+                                    <label className="block text-xs font-black text-emerald-700 uppercase tracking-widest mb-2">Thời điểm mở khóa</label>
+                                    <input
+                                        type="datetime-local"
+                                        value={modalReviewTime}
+                                        onChange={(e) => setModalReviewTime(e.target.value)}
+                                        className="w-full px-3 py-2.5 bg-white border border-emerald-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition text-sm font-medium"
+                                    />
+                                </div>
+                            )}
+                        </div>
+                        <div className="p-6 border-t border-gray-100 flex gap-3 bg-gray-50/50">
+                            <button
+                                onClick={() => setSelectedExamForReview(null)}
+                                className="flex-1 py-3 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-bold rounded-xl text-sm transition"
+                            >
+                                Hủy bỏ
+                            </button>
+                            <button
+                                onClick={handleSaveReviewSettings}
+                                disabled={isSavingReview}
+                                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-sm transition disabled:opacity-50"
+                            >
+                                {isSavingReview ? "Đang lưu..." : "Lưu thay đổi"}
                             </button>
                         </div>
                     </div>

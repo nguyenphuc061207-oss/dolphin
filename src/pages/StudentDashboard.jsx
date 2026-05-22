@@ -3,7 +3,7 @@ import { db } from "../firebase";
 import { collection, query, where, getDocs, doc, getDoc, updateDoc } from "firebase/firestore";
 import { useAuth } from "../contexts/AuthContext";
 import { Link, useNavigate } from "react-router-dom";
-import { RefreshCw, Trash2, Search, ArrowRight } from "lucide-react";
+import { RefreshCw, Trash2, Search, ArrowRight, Lock } from "lucide-react";
 import useDocumentTitle from "../hooks/useDocumentTitle";
 
 export default function StudentDashboard() {
@@ -12,7 +12,7 @@ export default function StudentDashboard() {
   useDocumentTitle("Dolphin | Bảng điều khiển");
   const [submissions, setSubmissions] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [examLimits, setExamLimits] = useState({}); // {examId: attemptLimit}
+  const [examConfigs, setExamConfigs] = useState({}); // {examId: {limit, reviewSettings}}
   const [examCode, setExamCode] = useState("");
   const [joinLoading, setJoinLoading] = useState(false);
   const [joinError, setJoinError] = useState("");
@@ -99,17 +99,21 @@ export default function StudentDashboard() {
         const visibleSubs = processedSubs.filter(sub => !sub.deletedByStudent);
         setSubmissions(visibleSubs);
 
-        // 2. Fetch attempt limits for unique exams
+        // 2. Fetch attempt limits and review settings for unique exams
         const uniqueExamIds = [...new Set(visibleSubs.map((s) => s.examId))];
-        const limits = {};
+        const configs = {};
         for (const examId of uniqueExamIds) {
           const examRef = doc(db, "exams", examId);
           const examSnap = await getDoc(examRef);
           if (examSnap.exists()) {
-            limits[examId] = examSnap.data().attemptLimit ?? 0;
+            const data = examSnap.data();
+            configs[examId] = {
+              limit: data.attemptLimit ?? 0,
+              reviewSettings: data.reviewSettings || { mode: 'always' }
+            };
           }
         }
-        setExamLimits(limits);
+        setExamConfigs(configs);
       } catch (error) {
         console.error("Lỗi khi tải dữ liệu:", error);
       } finally {
@@ -215,9 +219,21 @@ export default function StudentDashboard() {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {submissions.map((sub) => {
-                  const limit = examLimits[sub.examId] || 0;
+                  const config = examConfigs[sub.examId] || { limit: 0, reviewSettings: { mode: 'always' } };
+                  const limit = config.limit;
+                  const reviewSettings = config.reviewSettings;
                   const userAttemptCount = submissions.filter(s => s.examId === sub.examId).length;
                   const isLimitReached = limit > 0 && userAttemptCount >= limit;
+
+                  let isReviewLocked = false;
+                  if (reviewSettings.mode === 'never') {
+                      isReviewLocked = true;
+                  } else if (reviewSettings.mode === 'after_time' && reviewSettings.time) {
+                      const openTime = new Date(reviewSettings.time).getTime();
+                      if (Date.now() < openTime) {
+                          isReviewLocked = true;
+                      }
+                  }
 
                   return (
                     <tr key={sub.id} className="hover:bg-blue-50/30 transition-colors group">
@@ -247,12 +263,18 @@ export default function StudentDashboard() {
                       </td>
                       <td className="p-5 text-right">
                         <div className="flex justify-end items-center gap-3">
-                          <Link
-                            to={`/student/review/${sub.id}`}
-                            className="text-xs font-black text-blue-600 hover:underline uppercase tracking-wider"
-                          >
-                            Xem chi tiết
-                          </Link>
+                          {isReviewLocked ? (
+                              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1 cursor-not-allowed" title="Chưa đến thời gian xem lại hoặc giáo viên không cho phép">
+                                  Đang khóa
+                              </span>
+                          ) : (
+                              <Link
+                                to={`/student/review/${sub.id}`}
+                                className="text-xs font-black text-blue-600 hover:underline uppercase tracking-wider"
+                              >
+                                Xem chi tiết
+                              </Link>
+                          )}
                           <button
                             onClick={() => handleDeleteSubmission(sub.id)}
                             className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"

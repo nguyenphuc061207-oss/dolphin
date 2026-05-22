@@ -112,6 +112,8 @@ export default function TeacherDashboard() {
     const [shuffleQuestions, setShuffleQuestions] = useState(true);
     const [shuffleOptions, setShuffleOptions] = useState(false);
     const [attemptLimit, setAttemptLimit] = useState(0);
+    const [reviewMode, setReviewMode] = useState('always'); // 'always', 'never', 'after_time'
+    const [reviewTime, setReviewTime] = useState('');
 
     // --- QUẢN LÝ QUYỀN TRUY CẬP ---
     const [accessType, setAccessType] = useState('public'); // 'public' | 'restricted'
@@ -1359,11 +1361,13 @@ const handleSaveExam = async () => {
             mathDictionary: mathDictionary || {},
             accessType,
             allowedUsers: accessType === 'restricted' ? allowedUsers : [],
+            reviewSettings: { mode: reviewMode, time: reviewMode === 'after_time' ? reviewTime : null },
             createdAt: serverTimestamp()
         });
         alert("Xuất bản đề thi thành công!");
         setExamTitle(""); setQuestions([]); setExamPassword('');
         setStartDate(''); setEndDate('');
+        setReviewMode('always'); setReviewTime('');
         setAccessType('public');
         setAllowedUsers([]);
         fetchExams();
@@ -2056,6 +2060,32 @@ return (
                                             description="Xáo trộn vị trí các đáp án A, B, C, D."
                                             icon={Shuffle}
                                         />
+                                        <div className="py-3">
+                                            <label className="block text-sm font-semibold text-gray-700 mb-1.5 flex items-center gap-2">
+                                                <Eye className="w-4 h-4 text-gray-400" /> Chế độ xem lại bài thi
+                                            </label>
+                                            <p className="text-xs text-gray-400 mt-0.5 leading-relaxed mb-3">Quyết định khi nào học sinh có thể xem lại chi tiết đáp án.</p>
+                                            <select
+                                                value={reviewMode}
+                                                onChange={(e) => setReviewMode(e.target.value)}
+                                                className="w-full px-4 py-2 bg-white border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow text-sm cursor-pointer font-medium"
+                                            >
+                                                <option value="always">Luôn cho phép (Ngay sau khi nộp)</option>
+                                                <option value="never">Không bao giờ cho phép</option>
+                                                <option value="after_time">Mở sau một thời gian cụ thể</option>
+                                            </select>
+                                            {reviewMode === 'after_time' && (
+                                                <div className="mt-3 pl-3 border-l-2 border-blue-200 animate-in slide-in-from-top-2 duration-200">
+                                                    <p className="text-[11px] text-gray-400 font-bold uppercase mb-1">Thời điểm mở khóa xem lại</p>
+                                                    <input
+                                                        type="datetime-local"
+                                                        value={reviewTime}
+                                                        onChange={(e) => setReviewTime(e.target.value)}
+                                                        className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 transition-shadow text-sm font-medium"
+                                                    />
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
 

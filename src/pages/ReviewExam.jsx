@@ -52,6 +52,7 @@ export default function ReviewExam() {
     const [examInfo, setExamInfo] = useState(null);
     const [submissionCount, setSubmissionCount] = useState(0);
     const [filter, setFilter] = useState("all"); // all, correct, incorrect
+    const [isReviewLocked, setIsReviewLocked] = useState(false);
 
     useEffect(() => {
         const fetchReviewData = async () => {
@@ -80,7 +81,22 @@ export default function ReviewExam() {
             try {
                 const examRef = doc(db, "exams", submission.examId);
                 const examSnap = await getDoc(examRef);
-                if (examSnap.exists()) setExamInfo(examSnap.data());
+                if (examSnap.exists()) {
+                    const data = examSnap.data();
+                    setExamInfo(data);
+                    
+                    const rs = data.reviewSettings || { mode: 'always' };
+                    let locked = false;
+                    if (rs.mode === 'never') {
+                        locked = true;
+                    } else if (rs.mode === 'after_time' && rs.time) {
+                        const openTime = new Date(rs.time).getTime();
+                        if (Date.now() < openTime) {
+                            locked = true;
+                        }
+                    }
+                    setIsReviewLocked(locked);
+                }
                 
                 const subQuery = query(
                     collection(db, "submissions"),
@@ -114,6 +130,19 @@ export default function ReviewExam() {
             <p className="text-gray-500 max-w-md mt-2">Bài làm này thuộc phiên bản cũ hoặc dữ liệu không đầy đủ, không hỗ trợ xem chi tiết từng câu.</p>
             <Link to="/student" className="mt-6 px-6 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-200">
                 Quay lại bảng điểm
+            </Link>
+        </div>
+    );
+
+    if (isReviewLocked) return (
+        <div className="min-h-screen bg-[#f8fafc] flex flex-col items-center justify-center p-6 text-center">
+            <div className="w-16 h-16 bg-gray-100 text-gray-500 rounded-2xl flex items-center justify-center mb-6 border border-gray-200 shadow-sm">
+                <AlertTriangle className="w-8 h-8" />
+            </div>
+            <h2 className="text-2xl font-black text-gray-900 tracking-tight">Chi tiết bài làm đang khóa</h2>
+            <p className="text-gray-500 max-w-md mt-3 leading-relaxed font-medium">Giáo viên đã thiết lập không cho phép xem lại hoặc chưa đến thời điểm công bố đáp án của bài thi này.</p>
+            <Link to="/student" className="mt-8 px-8 py-3.5 bg-gray-900 text-white font-bold rounded-xl hover:bg-black transition-all shadow-lg shadow-gray-200 flex items-center gap-2">
+                Quay về Bảng điểm
             </Link>
         </div>
     );
