@@ -17,6 +17,7 @@ import TakeExam from "./pages/TakeExam";
 import ReviewExam from "./pages/ReviewExam";
 import DocumentModal from "./components/DocumentModal";
 import { footerDocuments } from "./constants/footerContent";
+import ChatBox from "./components/ChatBox";
 
 function Navigation() {
   const { currentUser } = useAuth();
@@ -279,6 +280,9 @@ function AppContent() {
           } />
         </Routes>
       </main>
+
+      {/* Global AI Assistant */}
+      <ChatBox />
     </div>
   );
 }

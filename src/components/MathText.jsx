@@ -66,69 +66,60 @@ const UNICODE_TO_LATEX = [
 export function normalizeUnicodeToLatex(text) {
   if (!text) return text;
   
-  // If text already has math delimiters, we still want to apply unicode normalization INSIDE them
-  // but for now, let's just handle the case where the user didn't use delimiters.
+  // Regex to match existing math blocks ($...$, $$...$$, \(...\), \[...\]) and images
+  const mathRegex = /(\$\$[\s\S]*?\$\$|\$[^$\n]*?\$|\\\[[\s\S]*?\\\]|\\\(.*?\\\)|\[IMG:\s*data:[^\]]+\])/g;
+  const parts = text.split(mathRegex);
   
-  let result = text;
-  let hasChanged = false;
+  let finalResult = "";
+  for (let i = 0; i < parts.length; i++) {
+    // Even indices are plain text, odd indices are matched math/img blocks
+    if (i % 2 === 0) {
+      let result = parts[i];
 
-  // Advanced patterns (convert before individual symbols)
-  // 1. sqrt(...) or \sqrt(...) or √(...) -> \sqrt{...}
-  if (/(?:\\?sqrt|√)\(([^)]+)\)/i.test(result)) {
-    result = result.replace(/(?:\\?sqrt|√)\(([^)]+)\)/gi, '$\\sqrt{$1}$');
-    hasChanged = true;
-  }
-  
-  // 1b. √ followed by a number or word (e.g. √123 or √x)
-  if (/√([a-zA-Z0-9]+)/.test(result)) {
-    result = result.replace(/√([a-zA-Z0-9]+)/g, '$\\sqrt{$1}$');
-    hasChanged = true;
-  }
-  
-  // 1c. If there is a stray √ left over without arguments, replace it with a text radical symbol or safe math command
-  if (/√/.test(result)) {
-    result = result.replace(/√/g, '$\\surd$'); // \surd is a safe radical symbol that takes no arguments
-    hasChanged = true;
-  }
-  
-  // 2. a/b fractions (simple ones like 3/4)
-  // Only match numbers/single letters to avoid matching dates or paths
-  if (/\b(\d+|[a-zA-Z])\/(\d+|[a-zA-Z])\b/.test(result)) {
-    // result = result.replace(/\b(\d+|[a-zA-Z])\/(\d+|[a-zA-Z])\b/g, '$\\frac{$1}{$2}$');
-    // hasChanged = true;
-    // Note: Fractions are risky to auto-detect. Disabled for now.
-  }
+      // 1. sqrt(...) or \sqrt(...) or √(...) -> \sqrt{...}
+      if (/(?:\\?sqrt|√)\(([^)]+)\)/i.test(result)) {
+        result = result.replace(/(?:\\?sqrt|√)\(([^)]+)\)/gi, '$\\sqrt{$1}$');
+      }
+      
+      // 1b. √ followed by a number or word (e.g. √123 or √x)
+      if (/√([a-zA-Z0-9]+)/.test(result)) {
+        result = result.replace(/√([a-zA-Z0-9]+)/g, '$\\sqrt{$1}$');
+      }
+      
+      // 1c. If there is a stray √ left over without arguments, replace it with a text radical symbol
+      if (/√/.test(result)) {
+        result = result.replace(/√/g, '$\\surd$'); 
+      }
+      
+      for (const [pattern, replacement] of UNICODE_TO_LATEX) {
+        if (pattern.test(result)) {
+          result = result.replace(pattern, '$' + replacement + '$');
+        }
+      }
 
-  for (const [pattern, replacement] of UNICODE_TO_LATEX) {
-    if (pattern.test(result)) {
-      result = result.replace(pattern, '$' + replacement + '$');
-      hasChanged = true;
+      // 3. Detect caret (^) and underscore (_) for exponents/subscripts
+      if (/[a-zA-Z0-9](\^|_)[a-zA-Z0-9]/.test(result)) {
+         result = result.replace(/\b([a-zA-Z0-9]+(\^|_)[a-zA-Z0-9]+)\b/g, '$$$1$$');
+      }
+
+      // 4. Detect Absolute Value |x| and Norm ||x||
+      if (/\|[a-zA-Z0-9]+\|/.test(result)) {
+        result = result.replace(/\|([a-zA-Z0-9]+)\|/g, '$$|$1|$$');
+      }
+      
+      // Cleanup only for newly created adjacent inline math blocks
+      result = result.replace(/\$\$\$/g, '$'); 
+      // Merge: $a$ $b$ -> $a b$
+      result = result.replace(/\$\s+\$/g, ' '); 
+      
+      finalResult += result;
+    } else {
+      // It's already math or image, just append it exactly as is
+      finalResult += parts[i];
     }
   }
 
-  // 3. Detect caret (^) and underscore (_) for exponents/subscripts
-  // Only if they are between alphanumeric characters to avoid common text usage
-  if (/[a-zA-Z0-9](\^|_)[a-zA-Z0-9]/.test(result)) {
-     // This is a bit aggressive, let's wrap the "word"
-     result = result.replace(/\b([a-zA-Z0-9]+(\^|_)[a-zA-Z0-9]+)\b/g, '$$$1$$');
-     hasChanged = true;
-  }
-
-  // 4. Detect Absolute Value |x| and Norm ||x||
-  if (/\|[a-zA-Z0-9]+\|/.test(result)) {
-    result = result.replace(/\|([a-zA-Z0-9]+)\|/g, '$$|$1|$$');
-    hasChanged = true;
-  }
-  
-  if (hasChanged) {
-    // Cleanup: merge adjacent math blocks like $a$$+$$b$ -> $a+b$
-    result = result.replace(/\$\$\$/g, '$'); 
-    result = result.replace(/\$\$/g, '');   
-    // Merge: $a$ $b$ -> $a b$
-    result = result.replace(/\$\s+\$/g, ' '); 
-  }
-
-  return result;
+  return finalResult;
 }
 
 /**

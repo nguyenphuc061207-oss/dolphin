@@ -200,6 +200,8 @@ export default function TakeExam() {
     }
   }, [exam?.questions, hasStarted]);
 
+
+
   const handleResume = async () => {
     await enterFullScreen();
     setIsInterrupted(false);
