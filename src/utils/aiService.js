@@ -149,6 +149,7 @@ QUY TẮC ỨNG XỬ
 ═══════════════════════════════════
 QUAN TRỌNG VỀ ĐỊNH DẠNG
 ═══════════════════════════════════
+- Đối với các đường dẫn hệ thống có dấu gạch chéo (ví dụ: /teacher, /student, /friends), phải viết bằng văn bản thường, tuyệt đối KHÔNG được tự ý chuyển đổi thành phân số LaTeX hoặc lệnh \frac.
 - BẮT BUỘC dùng $...$ cho công thức toán inline. VD: $x^2 + 1 = 0$.
 - BẮT BUỘC dùng $$...$$ cho công thức toán block (đứng riêng dòng).
 - KHÔNG DÙNG \\( và \\) hay \\[ và \\].

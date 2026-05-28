@@ -202,6 +202,8 @@ export function normalizeWordMangledMath(text) {
 /**
  * MathText Component
  */
+import { useRef, useEffect } from 'react';
+
 export default function MathText({ text, className = '' }) {
   if (!text) return null;
 
@@ -214,25 +216,7 @@ export default function MathText({ text, className = '' }) {
   // Safe Check: If MathJax is loaded on the client-side, let MathJax handle the rendering beautifully!
   // We must still parse out our [IMG: ...] tokens and render them as actual <img> tags.
   if (typeof window !== 'undefined' && window.MathJax) {
-    const parts = processed.split(/(\[IMG:\s*data:[^\]]+\])/g);
-    return (
-      <span className={`math-text ${className}`}>
-        {parts.map((part, i) => {
-          if (part.startsWith('[IMG:')) {
-            const src = part.slice(5, -1).trim();
-            return (
-              <img 
-                key={i} 
-                src={src} 
-                alt="Embedded from docx" 
-                style={{ maxWidth: '100%', height: 'auto', display: 'inline-block', margin: '0 5px', verticalAlign: 'middle' }} 
-              />
-            );
-          }
-          return <span key={i}>{part}</span>;
-        })}
-      </span>
-    );
+    return <MathJaxRenderer processed={processed} className={className} />;
   }
   
   // Fallback to KaTeX (react-katex) if MathJax is not available (e.g. locally or during build)
@@ -276,6 +260,42 @@ export default function MathText({ text, className = '' }) {
             <InlineMath math={token.content} />
           </MathErrorBoundary>
         );
+      })}
+    </span>
+  );
+}
+
+/**
+ * Sub-component that renders with MathJax and triggers typesetting after mount/update.
+ */
+function MathJaxRenderer({ processed, className }) {
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (containerRef.current && window.MathJax && window.MathJax.typesetPromise) {
+      // Clear previous MathJax rendering then re-typeset
+      window.MathJax.typesetPromise([containerRef.current]).catch((err) => {
+        console.warn('MathJax typeset error:', err);
+      });
+    }
+  }, [processed]);
+
+  const parts = processed.split(/(\[IMG:\s*data:[^\]]+\])/g);
+  return (
+    <span ref={containerRef} className={`math-text ${className}`}>
+      {parts.map((part, i) => {
+        if (part.startsWith('[IMG:')) {
+          const src = part.slice(5, -1).trim();
+          return (
+            <img 
+              key={i} 
+              src={src} 
+              alt="Embedded from docx" 
+              style={{ maxWidth: '100%', height: 'auto', display: 'inline-block', margin: '0 5px', verticalAlign: 'middle' }} 
+            />
+          );
+        }
+        return <span key={i}>{part}</span>;
       })}
     </span>
   );

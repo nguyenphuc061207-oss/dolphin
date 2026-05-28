@@ -17,8 +17,7 @@ import TakeExam from "./pages/TakeExam";
 import ReviewExam from "./pages/ReviewExam";
 import DocumentModal from "./components/DocumentModal";
 import { footerDocuments } from "./constants/footerContent";
-import ChatBox from "./components/ChatBox";
-
+import DolphinAssistant from "./components/assistant/DolphinAssistant";
 function Navigation() {
   const { currentUser } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
@@ -282,7 +281,7 @@ function AppContent() {
       </main>
 
       {/* Global AI Assistant */}
-      <ChatBox />
+      {!isTakeExamPage && <DolphinAssistant />}
     </div>
   );
 }
