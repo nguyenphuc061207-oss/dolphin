@@ -230,7 +230,7 @@ export default function ReviewExam() {
                                     <div className="flex justify-between items-start mb-6">
                                         <div className="font-bold text-gray-900 flex items-baseline gap-3 text-lg leading-relaxed flex-1 min-w-0">
                                             <span className="shrink-0 text-blue-600 font-black">Câu {qIndex + 1}:</span>
-                                            <div className="flex-1">
+                                            <div className="flex-1 overflow-x-auto">
                                                 <RichTextRenderer content={question.content} mathDict={submission.mathDictionary} />
                                             </div>
                                         </div>
@@ -346,7 +346,7 @@ export default function ReviewExam() {
                                                                 {String.fromCharCode(65 + oIndex)}
                                                             </div>
                                                         )}
-                                                        <div className="text-sm font-medium flex-1">
+                                                        <div className="text-sm font-medium flex-1 overflow-x-auto">
                                                             <RichTextRenderer content={option} mathDict={submission.mathDictionary} />
                                                         </div>
                                                         {(!isMultiTF && isCorrectOpt && isAnswered) && (

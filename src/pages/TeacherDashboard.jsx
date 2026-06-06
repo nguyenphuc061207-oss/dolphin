@@ -1890,7 +1890,7 @@ return (
                                         <div>
                                             <label className="block text-sm font-semibold text-gray-700 mb-1.5">Thời gian làm bài</label>
                                             <div className="relative">
-                                                <input type="number" min="1" value={duration} onChange={(e) => setDuration(e.target.value)} className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow pr-16" />
+                                                <input type="number" min="1" value={duration} onChange={(e) => setDuration(e.target.value === '' ? '' : Number(e.target.value))} className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow pr-16" />
                                                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-gray-400 font-semibold">phút</span>
                                             </div>
                                         </div>
@@ -1911,7 +1911,7 @@ return (
                                             <label className="block text-sm font-semibold text-gray-700 mb-1.5">Số lượt làm bài tối đa</label>
                                             <p className="text-xs text-gray-500 mb-1">Nhập 0 nếu muốn cho phép làm bài không giới hạn</p>
                                             <div className="relative">
-                                                <input type="number" min="0" value={attemptLimit} onChange={(e) => setAttemptLimit(e.target.value)} className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow pr-16" />
+                                                <input type="number" min="0" value={attemptLimit} onChange={(e) => setAttemptLimit(e.target.value === '' ? '' : Number(e.target.value))} className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow pr-16" />
                                                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-gray-400 font-semibold">lượt</span>
                                             </div>
                                         </div>
