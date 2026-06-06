@@ -39,9 +39,9 @@ export default function MessageBubble({ message }) {
           )}
         >
           {isUser ? (
-            <p className="whitespace-pre-wrap font-medium">{message.text}</p>
+            <p className="whitespace-pre-wrap font-normal">{message.text}</p>
           ) : (
-            <div className="prose prose-sm max-w-none prose-p:my-1 [&_p]:leading-relaxed prose-a:text-blue-600 font-medium">
+            <div className="prose prose-sm max-w-none prose-p:my-1 [&_p]:leading-relaxed prose-a:text-blue-600 font-normal">
               <RichTextRenderer content={formatText(message.text)} mathDict={{}} />
             </div>
           )}
