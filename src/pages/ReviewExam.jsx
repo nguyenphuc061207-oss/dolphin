@@ -227,15 +227,14 @@ export default function ReviewExam() {
 
                             return (
                                 <div key={qIndex} className={`bg-white rounded-3xl p-8 shadow-sm border transition-all ${cardBorder}`}>
-                                    <div className="flex justify-between items-start mb-6">
-                                        <div className="font-bold text-gray-900 flex items-baseline gap-3 text-lg leading-relaxed flex-1 min-w-0">
-                                            <span className="shrink-0 text-blue-600 font-black">Câu {qIndex + 1}:</span>
-                                            <div className="flex-1 overflow-x-auto">
-                                                <RichTextRenderer content={question.content} mathDict={submission.mathDictionary} />
-                                            </div>
+                                                                    <div className="flex justify-between items-center gap-2 mb-3 pb-2 border-b border-gray-100">
+                                        <div className="flex items-center gap-2">
+                                            <p className="text-[13px] font-bold text-gray-900">Câu&nbsp;{qIndex + 1}</p>
+                                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${typeInfo.color}`}>
+                                                {typeInfo.label}
+                                            </span>
                                         </div>
-                                        <div className="shrink-0 flex items-center gap-2 ml-3">
-                                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${typeInfo.color}`}>{typeInfo.label}</span>
+                                        <div className="shrink-0 flex items-center gap-2">
                                             {result === null ? (
                                                 <div className="flex items-center gap-1.5 text-gray-500 font-black bg-gray-50 px-3 py-1.5 rounded-full text-[10px] uppercase tracking-wider border border-gray-200">
                                                     <PenLine className="w-3.5 h-3.5" /> Tự luận
@@ -250,6 +249,10 @@ export default function ReviewExam() {
                                                 </div>
                                             )}
                                         </div>
+                                    </div>
+
+                                    <div className="text-[15px] text-blue-800 font-medium mb-4 overflow-x-auto">
+                                        <RichTextRenderer content={question.content} mathDict={submission.mathDictionary} />
                                     </div>
 
                                     {/* ── ESSAY: show written answer ── */}
@@ -346,7 +349,7 @@ export default function ReviewExam() {
                                                                 {String.fromCharCode(65 + oIndex)}
                                                             </div>
                                                         )}
-                                                        <div className="text-sm font-medium flex-1 overflow-x-auto">
+                                                        <div className="text-[15px] font-medium flex-1 overflow-x-auto">
                                                             <RichTextRenderer content={option} mathDict={submission.mathDictionary} />
                                                         </div>
                                                         {(!isMultiTF && isCorrectOpt && isAnswered) && (
