@@ -67,7 +67,7 @@ export function normalizeUnicodeToLatex(text) {
   if (!text) return text;
   
   // Regex to match existing math blocks ($...$, $$...$$, \(...\), \[...\]) and images
-  const mathRegex = /(\$\$[\s\S]*?\$\$|\$[^$\n]*?\$|\\\[[\s\S]*?\\\]|\\\(.*?\\\)|\[IMG:\s*data:[^\]]+\])/g;
+  const mathRegex = /(\$\$[\s\S]*?\$\$|\$[^$\n]*?\$|\\\[[\s\S]*?\\\]|\\\(.*?\\\)|\[IMG:\s*[^\]]+\])/g;
   const parts = text.split(mathRegex);
   
   let finalResult = "";
@@ -139,7 +139,7 @@ function tokenizeMath(text) {
   if (!text) return [];
   const tokens = [];
   // Match $$...$$ (block), $...$ (inline), and [IMG: ...] (image)
-  const regex = /(\$\$[\s\S]*?\$\$|\$[^$\n]*?\$|\[IMG:\s*data:[^\]]+\])/g;
+  const regex = /(\$\$[\s\S]*?\$\$|\$[^$\n]*?\$|\[IMG:\s*[^\]]+\])/g;
   let lastIndex = 0;
   let match;
 
@@ -280,7 +280,7 @@ function MathJaxRenderer({ processed, className }) {
     }
   }, [processed]);
 
-  const parts = processed.split(/(\[IMG:\s*data:[^\]]+\])/g);
+  const parts = processed.split(/(\[IMG:\s*[^\]]+\])/g);
   return (
     <span ref={containerRef} className={`math-text ${className}`}>
       {parts.map((part, i) => {

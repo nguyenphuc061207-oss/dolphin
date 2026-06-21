@@ -1341,16 +1341,89 @@ const handlePreviewTypeChange = (idx, newType) => {
     }));
 };
 
+    // Upload base64 image to ImgBB and return public URL
+    const uploadBase64ImageToImgBB = async (base64String) => {
+        const apiKey = import.meta.env.VITE_IMGBB_API_KEY;
+        if (!apiKey) {
+            throw new Error("Chưa cấu hình VITE_IMGBB_API_KEY. Vui lòng thêm khóa VITE_IMGBB_API_KEY vào file .env trong thư mục gốc dự án của bạn để tải ảnh.");
+        }
+
+        const matches = base64String.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+        const rawBase64 = matches ? matches[2] : base64String;
+
+        const formData = new FormData();
+        formData.append("image", rawBase64);
+
+        const response = await fetch(`https://api.imgbb.com/1/upload?key=${apiKey}`, {
+            method: "POST",
+            body: formData
+        });
+
+        if (!response.ok) {
+            const errData = await response.json();
+            throw new Error(errData.error?.message || "Lỗi khi upload lên ImgBB");
+        }
+
+        const data = await response.json();
+        return data.data.url;
+    };
+
+    // Scan all questions and options for base64 images, upload them, and replace them with URL
+    const uploadAllImagesInQuestions = async (qs) => {
+        const updatedQs = JSON.parse(JSON.stringify(qs));
+        const imgRegex = /\[IMG:\s*(data:image\/[a-zA-Z0-9+.-]+;base64,[^\]]+)\]/g;
+        
+        for (let i = 0; i < updatedQs.length; i++) {
+            const q = updatedQs[i];
+            
+            // Replace in content
+            if (q.content) {
+                let match;
+                const base64s = [];
+                imgRegex.lastIndex = 0;
+                while ((match = imgRegex.exec(q.content)) !== null) {
+                    base64s.push(match[1]);
+                }
+                for (const b64 of base64s) {
+                    const url = await uploadBase64ImageToImgBB(b64);
+                    q.content = q.content.replace(b64, url);
+                }
+            }
+            
+            // Replace in options
+            if (q.options && Array.isArray(q.options)) {
+                for (let optIdx = 0; optIdx < q.options.length; optIdx++) {
+                    const opt = q.options[optIdx];
+                    if (opt) {
+                        let match;
+                        const base64s = [];
+                        imgRegex.lastIndex = 0;
+                        while ((match = imgRegex.exec(opt)) !== null) {
+                            base64s.push(match[1]);
+                        }
+                        for (const b64 of base64s) {
+                            const url = await uploadBase64ImageToImgBB(b64);
+                            q.options[optIdx] = q.options[optIdx].replace(b64, url);
+                        }
+                    }
+                }
+            }
+        }
+        return updatedQs;
+    };
+
 const handleSaveExam = async () => {
     if (!examTitle.trim() || questions.length === 0) return alert("Vui lòng nhập tên đề và câu hỏi!");
     setIsSubmitting(true);
     try {
+        const finalQuestions = await uploadAllImagesInQuestions(questions);
+
         await addDoc(collection(db, "exams"), {
             teacherId: currentUser.uid,
             teacherName: currentUser.displayName,
             title: examTitle,
             duration: Number(duration),
-            questions: questions,
+            questions: finalQuestions,
             startDate: startDate || null,
             endDate: endDate || null,
             isAntiCheat,
@@ -1371,7 +1444,10 @@ const handleSaveExam = async () => {
         setAccessType('public');
         setAllowedUsers([]);
         fetchExams();
-    } catch (error) { console.error(error); }
+    } catch (error) { 
+        console.error(error); 
+        alert("Lỗi khi lưu đề thi: " + (error.message || error));
+    }
     finally { setIsSubmitting(false); }
 };
 
