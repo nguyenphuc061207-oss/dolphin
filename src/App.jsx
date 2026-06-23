@@ -18,6 +18,7 @@ import ReviewExam from "./pages/ReviewExam";
 import DocumentModal from "./components/DocumentModal";
 import { footerDocuments } from "./constants/footerContent";
 import DolphinAssistant from "./components/assistant/DolphinAssistant";
+import RecalculateScores from "./pages/RecalculateScores";
 function Navigation() {
   const { currentUser } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
@@ -251,6 +252,11 @@ function AppContent() {
           <Route path="/teacher/exam/:examId/submissions" element={
             <ProtectedRoute>
               <ExamSubmissions />
+            </ProtectedRoute>
+          } />
+          <Route path="/teacher/recalculate" element={
+            <ProtectedRoute>
+              <RecalculateScores />
             </ProtectedRoute>
           } />
 
