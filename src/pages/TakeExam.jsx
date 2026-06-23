@@ -45,7 +45,8 @@ function isAnswered(answer, type) {
 
 /** Toggle index in a multiple-choice answer array */
 function toggleMultiple(prev, idx) {
-  const arr = Array.isArray(prev) ? [...prev] : [];
+  idx = Number(idx);
+  const arr = Array.isArray(prev) ? [...prev].map(Number) : [];
   const pos = arr.indexOf(idx);
   if (pos >= 0) arr.splice(pos, 1);
   else arr.push(idx);
@@ -248,8 +249,8 @@ export default function TakeExam() {
       if (type === 'essay') {
         // essays are not auto-graded
       } else if (type === 'multiple') {
-        const ca = Array.isArray(q.correctAnswer) ? [...q.correctAnswer].sort().join(',') : '';
-        const sa = Array.isArray(ans) ? [...ans].sort().join(',') : '';
+        const ca = Array.isArray(q.correctAnswer) ? [...q.correctAnswer].map(Number).sort((a, b) => a - b).join(',') : '';
+        const sa = Array.isArray(ans) ? [...ans].map(Number).sort((a, b) => a - b).join(',') : '';
         if (ca === sa && ca !== '') correct++;
       } else if (type === 'multi_true_false') {
         const statements = q.options.length;
@@ -573,12 +574,13 @@ export default function TakeExam() {
                   {/* ── SINGLE / TRUE-FALSE / MULTIPLE / MULTI-TRUE-FALSE ── */}
                   {qType !== 'essay' && (
                     <div className={`grid gap-3 ${isShortOptions(question.options) ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"}`}>
-                      {question.options.filter(o => o !== undefined).map((opt, oi) => {
+                      {question.options.map((opt, oi) => {
+                        if (opt === undefined) return null;
                         const isMulti = qType === 'multiple';
                         const isMultiTF = qType === 'multi_true_false';
                         
                         let selected = false;
-                        if (isMulti) selected = Array.isArray(currentAnswer) && currentAnswer.includes(oi);
+                        if (isMulti) selected = Array.isArray(currentAnswer) && currentAnswer.map(Number).includes(oi);
                         else if (isMultiTF) selected = Array.isArray(currentAnswer) && currentAnswer[oi] !== null && currentAnswer[oi] !== undefined;
                         else selected = currentAnswer === oi;
 

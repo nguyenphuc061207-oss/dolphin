@@ -27,7 +27,9 @@
  *   - hasFormattingMark: requires non-whitespace content inside the tag
  */
 
-import { normalizeUnicodeToLatex } from '../components/MathText';
+import { normalizeUnicodeToLatex } from './mathUtils';
+import { convertAsciiMathToLatex } from './asciiMathParser';
+import { extractMathMLFromText } from './mathmlParser';
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -88,6 +90,28 @@ function extractTypeTag(text) {
 /** Remove [Loại: ...] tag from a content string */
 function removeTypeTag(text) {
     return text.replace(TYPE_TAG_REGEX, '').trim();
+}
+
+// ─────────────────────────────────────────────
+// Math notation normalization pipeline
+// ─────────────────────────────────────────────
+
+function normalizeMathNotations(text) {
+    if (!text) return text;
+
+    let result = text;
+
+    // 1. Convert MathML to LaTeX
+    result = extractMathMLFromText(result);
+
+    // 2. Convert AsciiMath to LaTeX
+    result = convertAsciiMathToLatex(result);
+
+    // 3. Normalize LaTeX delimiters: \(...\) → $...$, \[...\] → $$...$$
+    result = result.replace(/\\\(([\s\S]*?)\\\)/g, (match, p1) => `$${p1}$`);
+    result = result.replace(/\\\[([\s\S]*?)\\\]/g, (match, p1) => `$$$${p1}$$$$`);
+
+    return result;
 }
 
 // ─────────────────────────────────────────────
@@ -417,6 +441,8 @@ function applyAnswerKeyTable(blocks, keyMap) {
 export function parseQuestionsFromText(text) {
     if (!text?.trim()) return [];
 
+    text = normalizeMathNotations(text);
+
     let { keyMap: answerKeyTable, tableStartIndex } = extractAnswerKeyTable(text);
 
     if (tableStartIndex !== -1) {
@@ -529,7 +555,7 @@ export function parseQuestionsFromHtml(html) {
         .map(l => l.trim())
         .filter(l => l !== '' && l !== '&nbsp;');
 
-    const rawTextLines = htmlLines.map(stripHtml);
+    const rawTextLines = htmlLines.map(l => normalizeMathNotations(stripHtml(l)));
     
     // Split embedded answer lines first, maintaining strict parallel arrays for text and html lines
     const textLines = [];

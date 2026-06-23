@@ -18,8 +18,8 @@ function checkCorrect(q, studentAns) {
     const type = q.type || 'single';
     if (type === 'essay') return null; // not auto-gradable
     if (type === 'multiple') {
-        const ca = Array.isArray(q.correctAnswer) ? [...q.correctAnswer].sort().join(',') : '';
-        const sa = Array.isArray(studentAns) ? [...studentAns].sort().join(',') : '';
+        const ca = Array.isArray(q.correctAnswer) ? [...q.correctAnswer].map(Number).sort((a, b) => a - b).join(',') : '';
+        const sa = Array.isArray(studentAns) ? [...studentAns].map(Number).sort((a, b) => a - b).join(',') : '';
         return ca === sa && ca !== '';
     }
     if (type === 'multi_true_false') {
@@ -301,10 +301,10 @@ export default function ReviewExam() {
                                                     isCorrectOpt = stuAns === corAns;
                                                 } else {
                                                     isAnswered = isMulti
-                                                        ? Array.isArray(studentChoice) && studentChoice.includes(oIndex)
+                                                        ? Array.isArray(studentChoice) && studentChoice.map(Number).includes(oIndex)
                                                         : oIndex === studentChoice;
                                                     isCorrectOpt = isMulti
-                                                        ? Array.isArray(question.correctAnswer) && question.correctAnswer.includes(oIndex)
+                                                        ? Array.isArray(question.correctAnswer) && question.correctAnswer.map(Number).includes(oIndex)
                                                         : oIndex === question.correctAnswer;
                                                 }
 

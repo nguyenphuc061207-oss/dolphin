@@ -6,7 +6,7 @@ import { Link } from "react-router-dom";
 import { signOut } from "firebase/auth";
 import {
     LayoutDashboard, BookOpen, LogOut,
-    Search, BarChart3, Copy, Trash2, Clock, FileText, Shield, KeyRound, X, UserPlus, Plus, Users, Eye
+    Search, BarChart3, Copy, Trash2, Clock, FileText, Shield, KeyRound, X, UserPlus, Plus, Users, Eye, MoreVertical
 } from 'lucide-react';
 
 export default function ManageExams() {
@@ -31,6 +31,24 @@ export default function ManageExams() {
     const [modalReviewMode, setModalReviewMode] = useState('always');
     const [modalReviewTime, setModalReviewTime] = useState('');
     const [isSavingReview, setIsSavingReview] = useState(false);
+
+    // Các state liên quan đến chỉnh sửa thời gian làm bài trực tiếp
+    const [selectedExamForDuration, setSelectedExamForDuration] = useState(null);
+    const [modalDuration, setModalDuration] = useState(45);
+    const [isSavingDuration, setIsSavingDuration] = useState(false);
+
+    // State điều khiển dropdown tùy chọn đề thi
+    const [activeDropdownId, setActiveDropdownId] = useState(null);
+
+    useEffect(() => {
+        const handleClose = () => setActiveDropdownId(null);
+        document.addEventListener("click", handleClose);
+        return () => document.removeEventListener("click", handleClose);
+    }, []);
+
+    const toggleDropdown = (examId) => {
+        setActiveDropdownId(activeDropdownId === examId ? null : examId);
+    };
 
     const handleLogout = async () => {
         try {
@@ -176,6 +194,34 @@ export default function ManageExams() {
         setIsSavingReview(false);
     };
 
+    // Điều khiển modal chỉnh sửa thời gian làm bài trực tiếp
+    const handleOpenDurationModal = (exam) => {
+        setSelectedExamForDuration(exam);
+        setModalDuration(exam.duration || 45);
+    };
+
+    const handleSaveDurationSettings = async () => {
+        if (!selectedExamForDuration) return;
+        const durationNum = parseInt(modalDuration);
+        if (isNaN(durationNum) || durationNum <= 0) {
+            return alert("Thời gian làm bài phải là một số nguyên dương.");
+        }
+        setIsSavingDuration(true);
+        try {
+            const examRef = doc(db, "exams", selectedExamForDuration.id);
+            await updateDoc(examRef, {
+                duration: durationNum
+            });
+            alert("Cập nhật thời gian làm bài thành công!");
+            setSelectedExamForDuration(null);
+            fetchExams();
+        } catch (e) {
+            console.error(e);
+            alert("Lỗi khi cập nhật thời gian làm bài.");
+        }
+        setIsSavingDuration(false);
+    };
+
     // Thuật toán tìm kiếm Real-time
     const filteredExams = examsList.filter(exam =>
         exam.title.toLowerCase().includes(searchTerm.toLowerCase())
@@ -294,15 +340,15 @@ export default function ManageExams() {
                         </div>
 
                         {/* Bảng Dữ liệu (Data Table) */}
-                        <div className="bg-white rounded-b-2xl border border-gray-200 shadow-sm overflow-hidden">
-                            <div className="overflow-x-auto">
+                        <div className="bg-white rounded-b-2xl border border-gray-200 shadow-sm lg:overflow-visible overflow-hidden">
+                            <div className="overflow-x-auto lg:overflow-visible">
                                 <table className="w-full text-left border-collapse">
                                     <thead>
                                         <tr className="bg-gray-50 border-b border-gray-200">
                                             <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Tên đề thi</th>
                                             <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Mã đề thi</th>
                                             <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Ngày tạo</th>
-                                            <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Thao tác</th>
+                                            <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Cài đặt đề thi</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
@@ -348,43 +394,70 @@ export default function ManageExams() {
                                                     <td className="p-4 text-sm font-medium text-gray-600">
                                                         {exam.createdAt ? new Date(exam.createdAt.toDate()).toLocaleDateString('vi-VN') : 'Đang cập nhật'}
                                                     </td>
-                                                    <td className="p-4">
-                                                        <div className="flex justify-end gap-2 transition-opacity">
-                                                            <button 
-                                                                onClick={() => handleOpenReviewModal(exam)} 
-                                                                className="p-2 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" 
-                                                                title="Cấu hình xem lại"
+                                                    
+                                                    <td className="p-4 text-right relative">
+                                                        <div className="inline-block text-left">
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    toggleDropdown(exam.id);
+                                                                }}
+                                                                className="p-2 hover:bg-gray-150 rounded-xl transition-all cursor-pointer text-gray-500 hover:text-gray-900 border border-gray-200 bg-white shadow-xs"
+                                                                title="Thao tác"
                                                             >
-                                                                <Eye className="w-5 h-5" />
+                                                                <MoreVertical className="w-5 h-5" />
                                                             </button>
-                                                            <button 
-                                                                onClick={() => handleOpenAccessModal(exam)} 
-                                                                className="p-2 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors" 
-                                                                title="Quyền truy cập"
-                                                            >
-                                                                <Shield className="w-5 h-5" />
-                                                            </button>
-                                                            <button 
-                                                                onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/student/exam/${exam.id}`); alert("Copy link thành công!"); }} 
-                                                                className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" 
-                                                                title="Copy Link"
-                                                            >
-                                                                <Copy className="w-5 h-5" />
-                                                            </button>
-                                                            <Link 
-                                                                to={`/teacher/exam/${exam.id}/submissions`} 
-                                                                className="p-2 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors" 
-                                                                title="Xem Thống kê"
-                                                            >
-                                                                <BarChart3 className="w-5 h-5" />
-                                                            </Link>
-                                                            <button 
-                                                                onClick={() => handleDeleteExam(exam.id)} 
-                                                                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" 
-                                                                title="Xóa đề thi"
-                                                            >
-                                                                <Trash2 className="w-5 h-5" />
-                                                            </button>
+
+                                                            {activeDropdownId === exam.id && (
+                                                                <div className="absolute right-4 mt-2 w-52 bg-white rounded-2xl shadow-xl border border-gray-150 py-2 overflow-hidden z-50 animate-in fade-in slide-in-from-top-3 duration-200 text-left">
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            navigator.clipboard.writeText(`${window.location.origin}/student/exam/${exam.id}`);
+                                                                            alert("Sao chép link bài thi thành công!");
+                                                                        }}
+                                                                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors text-left cursor-pointer"
+                                                                    >
+                                                                        <Copy className="w-4 h-4 text-gray-400" /> Sao chép liên kết
+                                                                    </button>
+                                                                    
+                                                                    <Link
+                                                                        to={`/teacher/exam/${exam.id}/submissions`}
+                                                                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-gray-700 hover:bg-purple-50 hover:text-purple-700 transition-colors text-left cursor-pointer"
+                                                                    >
+                                                                        <BarChart3 className="w-4 h-4 text-gray-400" /> Xem thống kê
+                                                                    </Link>
+
+                                                                    <button
+                                                                        onClick={() => handleOpenAccessModal(exam)}
+                                                                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-gray-700 hover:bg-amber-50 hover:text-amber-700 transition-colors text-left cursor-pointer"
+                                                                    >
+                                                                        <Shield className="w-4 h-4 text-gray-400" /> Quyền truy cập
+                                                                    </button>
+
+                                                                    <button
+                                                                        onClick={() => handleOpenReviewModal(exam)}
+                                                                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 transition-colors text-left cursor-pointer"
+                                                                    >
+                                                                        <Eye className="w-4 h-4 text-gray-400" /> Cấu hình xem lại
+                                                                    </button>
+
+                                                                    <button
+                                                                        onClick={() => handleOpenDurationModal(exam)}
+                                                                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors text-left cursor-pointer"
+                                                                    >
+                                                                        <Clock className="w-4 h-4 text-gray-400" /> Điều chỉnh thời gian
+                                                                    </button>
+
+                                                                    <div className="border-t border-gray-100 my-1"></div>
+
+                                                                    <button
+                                                                        onClick={() => handleDeleteExam(exam.id)}
+                                                                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-red-600 hover:bg-red-50 transition-colors text-left cursor-pointer"
+                                                                    >
+                                                                        <Trash2 className="w-4 h-4 text-red-400" /> Xóa đề thi
+                                                                    </button>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     </td>
                                                 </tr>
@@ -591,6 +664,59 @@ export default function ManageExams() {
                                 className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-sm transition disabled:opacity-50"
                             >
                                 {isSavingReview ? "Đang lưu..." : "Lưu thay đổi"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal chỉnh sửa Thời gian đề thi */}
+            {selectedExamForDuration && (
+                <div className="fixed inset-0 bg-black/55 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-200 text-left">
+                    <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-gray-150 animate-in zoom-in-95 duration-200">
+                        <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                            <div className="flex items-center gap-2">
+                                <Clock className="w-5 h-5 text-blue-600 animate-pulse" />
+                                <h3 className="font-extrabold text-gray-900 text-lg">Điều chỉnh thời gian đề thi</h3>
+                            </div>
+                            <button onClick={() => setSelectedExamForDuration(null)} className="p-1.5 hover:bg-gray-150 rounded-lg text-gray-400 hover:text-gray-700 transition">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+                        <div className="p-6 space-y-6">
+                            <div>
+                                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Đề thi</p>
+                                <p className="text-base font-bold text-gray-900">{selectedExamForDuration.title}</p>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Thời gian làm bài (phút)</label>
+                                <div className="relative">
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        value={modalDuration}
+                                        onChange={(e) => setModalDuration(e.target.value)}
+                                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 transition text-sm font-semibold pr-16"
+                                        placeholder="Nhập số phút làm bài..."
+                                    />
+                                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-semibold">phút</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="p-6 border-t border-gray-100 flex gap-3 bg-gray-50/50">
+                            <button
+                                onClick={() => setSelectedExamForDuration(null)}
+                                className="flex-1 py-3 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-bold rounded-xl text-sm transition"
+                            >
+                                Hủy bỏ
+                            </button>
+                            <button
+                                onClick={handleSaveDurationSettings}
+                                disabled={isSavingDuration}
+                                className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm transition disabled:opacity-50"
+                            >
+                                {isSavingDuration ? "Đang lưu..." : "Lưu thay đổi"}
                             </button>
                         </div>
                     </div>
