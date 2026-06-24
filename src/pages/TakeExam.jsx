@@ -83,10 +83,14 @@ export default function TakeExam() {
   const [isInterrupted, setIsInterrupted] = useState(false);
   const [inputPassword, setInputPassword] = useState("");
   const [isGridOpen, setIsGridOpen] = useState(false);
+  const [multiScreenWarning, setMultiScreenWarning] = useState(false);
+  const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
+  const [showConfirmExit, setShowConfirmExit] = useState(false);
 
   useDocumentTitle(hasStarted ? "Dolphin | Đang làm bài thi..." : "Dolphin | Chuẩn bị thi");
 
   const questionRefs = useRef([]);
+  const isSubmittingRef = useRef(false);
 
   // Anti-cheat: DevTools Console self-XSS warning
   useEffect(() => {
@@ -114,16 +118,24 @@ export default function TakeExam() {
           if (data.shuffleQuestions) questions.sort(() => Math.random() - 0.5);
           if (data.shuffleOptions) {
             questions = questions.map((q) => {
+              if (!q.options || q.options.length === 0) return q;
               const indexed = q.options.map((opt, i) => ({ text: opt, orig: i }));
               indexed.sort(() => Math.random() - 0.5);
-              let newCorrectAnswer;
-              if (Array.isArray(q.correctAnswer)) {
-                newCorrectAnswer = q.correctAnswer
-                  .map(origIdx => indexed.findIndex(o => o.orig === origIdx))
+              
+              let newCorrectAnswer = q.correctAnswer;
+              const qType = q.type || 'single';
+              
+              if (qType === 'multi_true_false' || (Array.isArray(q.correctAnswer) && q.correctAnswer.every(val => typeof val === 'boolean'))) {
+                newCorrectAnswer = indexed.map(o => q.correctAnswer[o.orig] ?? false);
+              } else if (qType === 'multiple' || Array.isArray(q.correctAnswer)) {
+                const caArray = Array.isArray(q.correctAnswer) ? q.correctAnswer : (q.correctAnswer !== undefined && q.correctAnswer !== null && q.correctAnswer !== '' ? [q.correctAnswer] : []);
+                newCorrectAnswer = caArray
+                  .map(origIdx => indexed.findIndex(o => o.orig === Number(origIdx)))
                   .filter(idx => idx >= 0);
-              } else {
-                newCorrectAnswer = indexed.findIndex((o) => o.orig === q.correctAnswer);
+              } else if (q.correctAnswer !== undefined && q.correctAnswer !== null && q.correctAnswer !== '') {
+                newCorrectAnswer = indexed.findIndex((o) => o.orig === Number(q.correctAnswer));
               }
+
               return {
                 ...q,
                 options: indexed.map((o) => o.text),
@@ -154,7 +166,7 @@ export default function TakeExam() {
   // Timer
   useEffect(() => {
     if (!hasStarted || !exam) return;
-    if (timeLeft <= 0) { handleSubmitExam(); return; }
+    if (timeLeft <= 0) { processSubmit(); return; }
     const t = setInterval(() => setTimeLeft((p) => p - 1), 1000);
     return () => clearInterval(t);
   }, [timeLeft, exam, hasStarted]);
@@ -163,7 +175,7 @@ export default function TakeExam() {
   useEffect(() => {
     if (!hasStarted || !exam?.isAntiCheat) return;
     const h = () => {
-      if (document.hidden) {
+      if (document.hidden && !isSubmittingRef.current) {
         setCheatCount((p) => p + 1);
         setIsInterrupted(true);
       }
@@ -176,12 +188,73 @@ export default function TakeExam() {
   useEffect(() => {
     if (!hasStarted || !exam?.isAntiCheat) return;
     const h = () => {
-      if (!document.fullscreenElement && hasStarted) {
+      if (!document.fullscreenElement && hasStarted && !isSubmittingRef.current) {
         setIsInterrupted(true);
       }
     };
     document.addEventListener("fullscreenchange", h);
     return () => document.removeEventListener("fullscreenchange", h);
+  }, [hasStarted, exam]);
+
+  // Anti-cheat: Multi-screen detection (Lobby & In-Exam)
+  useEffect(() => {
+    if (!exam?.isAntiCheat) return;
+    const checkScreen = () => {
+      if (window.screen && window.screen.isExtended) {
+        setMultiScreenWarning(true);
+        if (hasStarted && !isSubmittingRef.current) {
+          setCheatCount((p) => p + 1);
+          setIsInterrupted(true);
+        }
+      } else {
+        setMultiScreenWarning(false);
+      }
+    };
+    checkScreen();
+    const interval = setInterval(checkScreen, 2000);
+    return () => clearInterval(interval);
+  }, [exam, hasStarted]);
+
+  // Anti-cheat: Mouse Leave Detection
+  useEffect(() => {
+    if (!hasStarted || !exam?.isAntiCheat || isInterrupted) return;
+    const handleMouseLeave = (e) => {
+      if (isSubmittingRef.current) return;
+      if (e.clientY <= 0 || e.clientX <= 0 || (e.clientX >= window.innerWidth || e.clientY >= window.innerHeight)) {
+        setCheatCount((p) => p + 1);
+        setIsInterrupted(true);
+      }
+    };
+    document.addEventListener("mouseleave", handleMouseLeave);
+    return () => document.removeEventListener("mouseleave", handleMouseLeave);
+  }, [hasStarted, exam, isInterrupted]);
+
+  // Anti-cheat: Prevent Copy/Paste/ContextMenu/Shortcuts
+  useEffect(() => {
+    if (!hasStarted || !exam?.isAntiCheat) return;
+    const preventDefault = (e) => e.preventDefault();
+    const handleKeyDown = (e) => {
+      // F12, Ctrl+Shift+I/J/C, Ctrl+U/S/C/V/X
+      if (
+        e.keyCode === 123 ||
+        (e.ctrlKey && e.shiftKey && (e.keyCode === 73 || e.keyCode === 74 || e.keyCode === 67)) ||
+        (e.ctrlKey && (e.keyCode === 85 || e.keyCode === 83 || e.keyCode === 67 || e.keyCode === 86 || e.keyCode === 88))
+      ) {
+        e.preventDefault();
+      }
+    };
+    document.addEventListener("contextmenu", preventDefault);
+    document.addEventListener("copy", preventDefault);
+    document.addEventListener("cut", preventDefault);
+    document.addEventListener("paste", preventDefault);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("contextmenu", preventDefault);
+      document.removeEventListener("copy", preventDefault);
+      document.removeEventListener("cut", preventDefault);
+      document.removeEventListener("paste", preventDefault);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
   }, [hasStarted, exam]);
 
   // Fullscreen
@@ -239,8 +312,16 @@ export default function TakeExam() {
     return `${h.toString().padStart(2, "0")} : ${m.toString().padStart(2, "0")} : ${sec.toString().padStart(2, "0")}`;
   };
 
-  const handleSubmitExam = async () => {
-    if (timeLeft > 0 && !window.confirm("Bạn có chắc muốn nộp bài?")) return;
+  const handleSubmitExam = () => {
+    if (timeLeft > 0) {
+      setShowConfirmSubmit(true);
+      return;
+    }
+    processSubmit();
+  };
+
+  const processSubmit = async () => {
+    setShowConfirmSubmit(false);
     let correct = 0;
     const total = exam.questions.length;
     exam.questions.forEach((q, i) => {
@@ -270,13 +351,14 @@ export default function TakeExam() {
         }
         correct += points;
       } else {
-        if (ans === q.correctAnswer) correct++;
+        if (ans !== undefined && ans !== null && ans !== '' && Number(ans) === Number(q.correctAnswer)) correct++;
       }
     });
     // Count gradable (non-essay) questions for score
     const gradable = exam.questions.filter(q => (q.type || 'single') !== 'essay').length;
     const score = gradable > 0 ? ((correct / gradable) * 10).toFixed(2) : '0.00';
     try {
+      isSubmittingRef.current = true;
       await addDoc(collection(db, "submissions"), {
         examId, examTitle: exam.title, studentId: currentUser.uid,
         studentName: studentManualName || currentUser.displayName || "Thí sinh ẩn danh",
@@ -291,7 +373,11 @@ export default function TakeExam() {
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
       alert(`Nộp bài thành công!\nĐiểm: ${score}/10 (${correct}/${gradable} câu đúng)`);
       navigate("/student");
-    } catch (e) { console.error(e); alert("Lỗi khi nộp bài."); }
+    } catch (e) { 
+      isSubmittingRef.current = false;
+      console.error(e); 
+      alert("Lỗi khi nộp bài."); 
+    }
   };
 
   const answeredCount = exam?.questions
@@ -360,7 +446,15 @@ export default function TakeExam() {
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
                 <p className="text-xs text-amber-700 flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 shrink-0" />
-                  Bài thi có giám sát tự động. Hệ thống ghi nhận khi bạn rời cửa sổ.
+                  Bài thi có giám sát tự động nghiêm ngặt. Hệ thống sẽ ghi nhận vi phạm khi bạn thoát toàn màn hình, chuyển Tab, dùng nhiều màn hình, hoặc rê chuột ra khỏi cửa sổ.
+                </p>
+              </div>
+            )}
+            {multiScreenWarning && exam.isAntiCheat && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                <p className="text-xs text-red-700 font-bold flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  PHÁT HIỆN NHIỀU MÀN HÌNH: Bạn đang sử dụng nhiều màn hình hoặc đang chia sẻ màn hình. Vui lòng ngắt kết nối màn hình phụ để có thể bắt đầu làm bài.
                 </p>
               </div>
             )}
@@ -429,10 +523,10 @@ export default function TakeExam() {
                 setHasStarted(true); 
                 if (exam?.isAntiCheat) enterFullScreen(); 
               }}
-              disabled={limitReached || (isRestricted && !isAllowed)}
-              className={`w-full py-3.5 ${limitReached || (isRestricted && !isAllowed) ? "bg-gray-400 cursor-not-allowed" : "bg-orange-500 hover:bg-orange-600 active:bg-orange-700"} text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2 shadow-md`}
+              disabled={limitReached || (isRestricted && !isAllowed) || (multiScreenWarning && exam?.isAntiCheat)}
+              className={`w-full py-3.5 ${limitReached || (isRestricted && !isAllowed) || (multiScreenWarning && exam?.isAntiCheat) ? "bg-gray-400 cursor-not-allowed" : "bg-orange-500 hover:bg-orange-600 active:bg-orange-700"} text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2 shadow-md`}
             >
-              {limitReached ? "Đã hết lượt làm bài" : isRestricted && !isAllowed ? "Bị hạn chế truy cập" : "Bắt đầu thi"} <ArrowRight className="w-5 h-5" />
+              {limitReached ? "Đã hết lượt làm bài" : isRestricted && !isAllowed ? "Bị hạn chế truy cập" : (multiScreenWarning && exam?.isAntiCheat) ? "Tắt màn hình phụ để thi" : "Bắt đầu thi"} <ArrowRight className="w-5 h-5" />
             </button>
           </div>
         </div>
@@ -452,8 +546,8 @@ export default function TakeExam() {
             </div>
             <h2 className="text-2xl font-black text-gray-900 mb-2">CẢNH BÁO VI PHẠM!</h2>
             <p className="text-gray-500 font-medium mb-8">
-              Bạn vừa rời khỏi màn hình làm bài hoặc thoát chế độ toàn màn hình. 
-              Hành động này đã được ghi lại.
+              Hệ thống phát hiện hành vi đáng ngờ (thoát toàn màn hình, rời chuột khỏi cửa sổ, chuyển Tab, hoặc cắm thêm màn hình phụ).
+              Hành động này đã được ghi lại và báo cáo giáo viên.
             </p>
             <div className="p-4 bg-gray-50 rounded-2xl mb-8 flex items-center justify-between">
               <span className="text-sm font-bold text-gray-400 uppercase">Số lần vi phạm</span>
@@ -474,7 +568,7 @@ export default function TakeExam() {
         <div className="flex items-center justify-between px-2 sm:px-4 py-2 gap-2 sm:gap-3">
           {/* Left: back */}
           <button
-            onClick={() => { if (window.confirm("Thoát? Bài làm sẽ không được lưu.")) navigate("/student"); }}
+            onClick={() => setShowConfirmExit(true)}
             className="flex items-center gap-1.5 text-gray-500 hover:text-gray-900 text-sm font-medium transition-colors shrink-0"
           >
             <ArrowLeft className="w-4 h-4" /> <span className="hidden sm:inline">Quay lại</span>
@@ -721,13 +815,10 @@ export default function TakeExam() {
         {/* Mobile Floating Action Button (FAB) */}
         <button
           onClick={() => setIsGridOpen(true)}
-          className="fixed bottom-6 right-6 z-40 lg:hidden flex items-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-full shadow-lg transition-all duration-200 hover:scale-105 active:scale-95 font-bold text-sm border border-blue-500/20 shrink-0"
+          className="lg:hidden fixed bottom-6 left-6 z-40 w-14 h-14 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-2xl hover:bg-blue-700 transition-colors"
         >
-          <LayoutGrid className="w-4 h-4" />
-          <span>Danh sách câu ({answeredCount}/{totalQ})</span>
+          <LayoutGrid className="w-6 h-6" />
         </button>
-
-        {/* Mobile Drawer Overlay */}
         {isGridOpen && (
           <div
             className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs lg:hidden transition-opacity duration-300"
@@ -812,6 +903,37 @@ export default function TakeExam() {
           </div>
         </div>
       </div>
+
+      {/* Confirm Submit Modal */}
+      {showConfirmSubmit && (
+        <div className="fixed inset-0 z-[10000] bg-gray-900/80 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full text-center shadow-xl">
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Nộp bài thi?</h3>
+            <p className="text-sm text-gray-500 mb-6">Bạn có chắc chắn muốn nộp bài thi ngay bây giờ?</p>
+            <div className="flex gap-3">
+              <button onClick={() => setShowConfirmSubmit(false)} className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition-colors">Hủy</button>
+              <button onClick={processSubmit} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors">Nộp bài</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Exit Modal */}
+      {showConfirmExit && (
+        <div className="fixed inset-0 z-[10000] bg-gray-900/80 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full text-center shadow-xl">
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Thoát bài thi?</h3>
+            <p className="text-sm text-gray-500 mb-6">Bài làm của bạn sẽ không được lưu. Bạn có chắc chắn muốn thoát?</p>
+            <div className="flex gap-3">
+              <button onClick={() => setShowConfirmExit(false)} className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition-colors">Hủy</button>
+              <button onClick={() => {
+                isSubmittingRef.current = true;
+                navigate("/student");
+              }} className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-colors">Thoát</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

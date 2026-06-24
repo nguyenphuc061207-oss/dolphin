@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, Link, useNavigate, useSearchParams } from "react-router-dom";
 import { db } from "../firebase";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { RefreshCw, AlertTriangle, CheckCircle2, XCircle, PenLine } from "lucide-react";
@@ -45,6 +45,8 @@ function isShortOptions(options) {
 }
 
 export default function ReviewExam() {
+    const [searchParams] = useSearchParams();
+    const fromTeacher = searchParams.get("from") === "teacher";
     const navigate = useNavigate();
     const { submissionId } = useParams();
     const [submission, setSubmission] = useState(null);
@@ -134,7 +136,7 @@ export default function ReviewExam() {
         </div>
     );
 
-    if (isReviewLocked) return (
+    if (isReviewLocked && !fromTeacher) return (
         <div className="min-h-screen bg-[#f8fafc] flex flex-col items-center justify-center p-6 text-center">
             <div className="w-16 h-16 bg-gray-100 text-gray-500 rounded-2xl flex items-center justify-center mb-6 border border-gray-200 shadow-sm">
                 <AlertTriangle className="w-8 h-8" />
@@ -164,8 +166,8 @@ export default function ReviewExam() {
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                         <div>
                             <div className="flex items-center gap-2 mb-2">
-                                <Link to="/student" className="text-blue-600 hover:text-blue-800 text-sm font-bold flex items-center gap-1 transition-colors">
-                                    &larr; Bảng điểm
+                                <Link to={fromTeacher ? `/teacher/exam/${submission.examId}/submissions` : "/student"} className="text-blue-600 hover:text-blue-800 text-sm font-bold flex items-center gap-1 transition-colors">
+                                    &larr; Quay lại
                                 </Link>
                                 <span className="text-gray-300">/</span>
                                 <span className="text-xs font-black text-gray-400 uppercase tracking-widest">Chi tiết bài làm</span>

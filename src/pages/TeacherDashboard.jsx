@@ -97,7 +97,7 @@ const ToggleSwitch = ({ enabled, onChange, label, description, icon: Icon }) => 
 
 export default function TeacherDashboard() {
     const { currentUser } = useAuth();
-    useDocumentTitle("Dolphin | Bảng điều khiển");
+    useDocumentTitle("Dolphin | Tạo đề thi");
 
     // --- DỮ LIỆU ĐỀ THI ---
     const [examTitle, setExamTitle] = useState("");
@@ -1534,7 +1534,7 @@ return (
             </div>
             <nav className="space-y-1 flex-1">
                 <Link to="/teacher" className="w-full px-4 py-3 rounded-xl bg-blue-50 text-blue-600 font-bold flex items-center gap-3 transition-all">
-                    <LayoutDashboard className="w-5 h-5" /> Dashboard
+                    <LayoutDashboard className="w-5 h-5" /> Tạo đề thi
                 </Link>
                 <Link to="/teacher/exams" className="w-full px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-50 flex items-center gap-3 font-semibold transition-all">
                     <BookOpen className="w-5 h-5" /> Quản lý Đề thi
@@ -1681,7 +1681,7 @@ return (
 
             <main className="p-8 w-full max-w-7xl mx-auto">
                 <div className="mb-8">
-                    <h2 className="text-3xl font-black text-gray-900">Bảng điều khiển</h2>
+                    <h2 className="text-3xl font-black text-gray-900">Tạo đề thi</h2>
                     <p className="text-gray-500 font-medium mt-1">Chào mừng quay trở lại, {currentUser?.displayName}!</p>
                 </div>
                 <div className="grid lg:grid-cols-3 gap-8">
@@ -2285,7 +2285,7 @@ return (
                                                         to={`/teacher/exam/${exam.id}/submissions`}
                                                         className="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-gray-700 hover:bg-purple-50 hover:text-purple-700 transition-colors text-left cursor-pointer"
                                                     >
-                                                        <BarChart3 className="w-3.5 h-3.5 text-gray-400" /> Xem thống kê
+                                                        <BarChart3 className="w-3.5 h-3.5 text-gray-400" /> Thống kê điểm
                                                     </Link>
                                                     <button
                                                         onClick={() => handleOpenAccessModal(exam)}

@@ -237,7 +237,7 @@ export default function ManageExams() {
                 </div>
                 <nav className="space-y-1 flex-1">
                     <Link to="/teacher" className="w-full px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-50 flex items-center gap-3 font-semibold transition-all">
-                        <LayoutDashboard className="w-5 h-5" /> Dashboard
+                        <LayoutDashboard className="w-5 h-5" /> Tạo đề thi
                     </Link>
                     <Link to="/teacher/exams" className="w-full px-4 py-3 rounded-xl bg-blue-50 text-blue-600 font-bold flex items-center gap-3 transition-all">
                         <BookOpen className="w-5 h-5" /> Quản lý Đề thi
@@ -424,7 +424,7 @@ export default function ManageExams() {
                                                                         to={`/teacher/exam/${exam.id}/submissions`}
                                                                         className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-gray-700 hover:bg-purple-50 hover:text-purple-700 transition-colors text-left cursor-pointer"
                                                                     >
-                                                                        <BarChart3 className="w-4 h-4 text-gray-400" /> Xem thống kê
+                                                                        <BarChart3 className="w-4 h-4 text-gray-400" /> Thống kê điểm
                                                                     </Link>
 
                                                                     <button
@@ -438,7 +438,7 @@ export default function ManageExams() {
                                                                         onClick={() => handleOpenReviewModal(exam)}
                                                                         className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 transition-colors text-left cursor-pointer"
                                                                     >
-                                                                        <Eye className="w-4 h-4 text-gray-400" /> Cấu hình xem lại
+                                                                        <Eye className="w-4 h-4 text-gray-400" /> Chế độ xem lại bài thi
                                                                     </button>
 
                                                                     <button
@@ -614,7 +614,7 @@ export default function ManageExams() {
                         <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
                             <div className="flex items-center gap-2">
                                 <Eye className="w-5 h-5 text-emerald-600 animate-pulse" />
-                                <h3 className="font-extrabold text-gray-900 text-lg">Cấu hình Xem lại bài thi</h3>
+                                <h3 className="font-extrabold text-gray-900 text-lg">Thiết lập Chế độ xem lại bài thi</h3>
                             </div>
                             <button onClick={() => setSelectedExamForReview(null)} className="p-1.5 hover:bg-gray-150 rounded-lg text-gray-400 hover:text-gray-700 transition">
                                 <X className="w-5 h-5" />

@@ -1,8 +1,55 @@
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { db } from "../firebase";
-import { collection, query, where, getDocs, deleteDoc, doc, getDoc } from "firebase/firestore";
-import { Trash2 } from "lucide-react";
+import { collection, query, where, getDocs, deleteDoc, doc, getDoc, updateDoc } from "firebase/firestore";
+import { Trash2, Eye } from "lucide-react";
+
+function recalculateSubmissionScore(sub, fallbackQuestions) {
+    const snapshot = sub.examSnapshot || fallbackQuestions;
+    if (!snapshot || !sub.answers) return null;
+    let correct = 0;
+    const total = snapshot.length;
+    snapshot.forEach((q, i) => {
+        if (!q) return;
+        const type = q.type || 'single';
+        const ans = sub.answers[i];
+        if (type === 'essay') {
+            // essays are not auto-graded
+        } else if (type === 'multiple') {
+            const ca = Array.isArray(q.correctAnswer) ? [...q.correctAnswer].map(Number).sort((a, b) => a - b).join(',') : '';
+            const sa = Array.isArray(ans) ? [...ans].map(Number).sort((a, b) => a - b).join(',') : '';
+            const isOk = ca === sa && ca !== '';
+            console.log(`[Diagnostic recalc] Q${i+1} multiple:`, { ca, sa, isOk });
+            if (isOk) correct++;
+        } else if (type === 'multi_true_false') {
+            const statements = q.options ? q.options.length : 0;
+            let correctStmts = 0;
+            for (let j = 0; j < statements; j++) {
+                if (Array.isArray(ans) && q.correctAnswer && ans[j] === q.correctAnswer[j]) correctStmts++;
+            }
+            let points = 0;
+            if (q.scoringMethod === 'gdpt_2018') {
+                const r = statements > 0 ? correctStmts / statements : 0;
+                if (r === 1) points = 1;
+                else if (r >= 0.75) points = 0.5;
+                else if (r >= 0.5) points = 0.25;
+                else if (r >= 0.25) points = 0.1;
+            } else {
+                points = statements > 0 ? correctStmts / statements : 0; // linear default
+            }
+            console.log(`[Diagnostic recalc] Q${i+1} multi_true_false:`, { correctStmts, statements, points });
+            correct += points;
+        } else {
+            const isOk = ans !== undefined && ans !== null && Number(ans) === Number(q.correctAnswer);
+            console.log(`[Diagnostic recalc] Q${i+1} single/TF:`, { ans, qCorrect: q.correctAnswer, isOk });
+            if (isOk) correct++;
+        }
+    });
+    const gradable = snapshot.filter(q => q && (q.type || 'single') !== 'essay').length;
+    const score = gradable > 0 ? Number(((correct / gradable) * 10).toFixed(2)) : 0;
+    console.log("[Diagnostic recalc] Final score:", { correct, gradable, score });
+    return { score, correctCount: correct };
+}
 
 const getAttemptNumber = (sub, allSubs) => {
     if (sub.attemptNumber !== undefined) return sub.attemptNumber;
@@ -37,8 +84,9 @@ export default function ExamSubmissions() {
         try {
             // Fetch cấu hình đề thi để kiểm tra tính năng giám sát
             const examSnap = await getDoc(doc(db, "exams", examId));
+            let examData = null;
             if (examSnap.exists()) {
-                const examData = examSnap.data();
+                examData = examSnap.data();
                 setExam(examData);
                 setExamTitle(examData.title);
             }
@@ -50,9 +98,25 @@ export default function ExamSubmissions() {
 
             const querySnapshot = await getDocs(q);
             const subs = [];
-            querySnapshot.forEach((doc) => {
-                subs.push({ id: doc.id, ...doc.data() });
-            });
+            for (const docSnap of querySnapshot.docs) {
+                const data = docSnap.data();
+                const subId = docSnap.id;
+                
+                // Recalculate score to make sure it's accurate
+                const recalc = recalculateSubmissionScore({ id: subId, ...data }, examData?.questions);
+                if (recalc && (recalc.score !== data.score || recalc.correctCount !== data.correctCount)) {
+                    // Update in firestore asynchronously
+                    updateDoc(doc(db, "submissions", subId), {
+                        score: recalc.score,
+                        correctCount: recalc.correctCount
+                    }).catch(err => console.error("Error updating submission score:", err));
+                    
+                    data.score = recalc.score;
+                    data.correctCount = recalc.correctCount;
+                }
+                
+                subs.push({ id: subId, ...data });
+            }
 
             if (subs.length > 0 && !examTitle) {
                 setExamTitle(subs[0].examTitle);
@@ -137,7 +201,7 @@ export default function ExamSubmissions() {
     }
 
     return (
-        <div className="w-full max-w-5xl bg-white p-8 rounded-xl shadow-sm border border-gray-100 mb-20">
+        <div className="w-full max-w-7xl mx-auto bg-white p-8 rounded-xl shadow-sm border border-gray-100 mb-20">
             <div className="flex justify-between items-center mb-6 border-b pb-4">
                 <div>
                     <h2 className="text-2xl font-bold text-gray-800">Thống kê kết quả</h2>
@@ -216,7 +280,14 @@ export default function ExamSubmissions() {
                                     <td className="p-4 text-sm text-gray-500">
                                         {sub.submittedAt ? new Date(sub.submittedAt.toDate()).toLocaleString("vi-VN") : "Không xác định"}
                                     </td>
-                                    <td className="p-4 text-right">
+                                    <td className="p-4 text-right flex items-center justify-end gap-2">
+                                        <Link 
+                                            to={`/student/review/${sub.id}?from=teacher`}
+                                            className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition inline-block"
+                                            title="Xem chi tiết bài làm"
+                                        >
+                                            <Eye className="w-4 h-4" />
+                                        </Link>
                                         <button 
                                             onClick={() => handleDeleteSubmission(sub.id)}
                                             className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"

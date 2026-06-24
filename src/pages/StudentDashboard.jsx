@@ -6,6 +6,53 @@ import { Link, useNavigate } from "react-router-dom";
 import { RefreshCw, Trash2, Search, ArrowRight, Lock } from "lucide-react";
 import useDocumentTitle from "../hooks/useDocumentTitle";
 
+function recalculateSubmissionScore(sub, fallbackQuestions) {
+    const snapshot = sub.examSnapshot || fallbackQuestions;
+    if (!snapshot || !sub.answers) return null;
+    let correct = 0;
+    const total = snapshot.length;
+    snapshot.forEach((q, i) => {
+        if (!q) return;
+        const type = q.type || 'single';
+        const ans = sub.answers[i];
+        if (type === 'essay') {
+            // essays are not auto-graded
+        } else if (type === 'multiple') {
+            const ca = Array.isArray(q.correctAnswer) ? [...q.correctAnswer].map(Number).sort((a, b) => a - b).join(',') : '';
+            const sa = Array.isArray(ans) ? [...ans].map(Number).sort((a, b) => a - b).join(',') : '';
+            const isOk = ca === sa && ca !== '';
+            console.log(`[Diagnostic recalc student] Q${i+1} multiple:`, { ca, sa, isOk });
+            if (isOk) correct++;
+        } else if (type === 'multi_true_false') {
+            const statements = q.options ? q.options.length : 0;
+            let correctStmts = 0;
+            for (let j = 0; j < statements; j++) {
+                if (Array.isArray(ans) && q.correctAnswer && ans[j] === q.correctAnswer[j]) correctStmts++;
+            }
+            let points = 0;
+            if (q.scoringMethod === 'gdpt_2018') {
+                const r = statements > 0 ? correctStmts / statements : 0;
+                if (r === 1) points = 1;
+                else if (r >= 0.75) points = 0.5;
+                else if (r >= 0.5) points = 0.25;
+                else if (r >= 0.25) points = 0.1;
+            } else {
+                points = statements > 0 ? correctStmts / statements : 0; // linear default
+            }
+            console.log(`[Diagnostic recalc student] Q${i+1} multi_true_false:`, { correctStmts, statements, points });
+            correct += points;
+        } else {
+            const isOk = ans !== undefined && ans !== null && Number(ans) === Number(q.correctAnswer);
+            console.log(`[Diagnostic recalc student] Q${i+1} single/TF:`, { ans, qCorrect: q.correctAnswer, isOk });
+            if (isOk) correct++;
+        }
+    });
+    const gradable = snapshot.filter(q => q && (q.type || 'single') !== 'essay').length;
+    const score = gradable > 0 ? Number(((correct / gradable) * 10).toFixed(2)) : 0;
+    console.log("[Diagnostic recalc student] Final score:", { correct, gradable, score });
+    return { score, correctCount: correct };
+}
+
 export default function StudentDashboard() {
   const { currentUser } = useAuth();
   const navigate = useNavigate();
@@ -51,7 +98,6 @@ export default function StudentDashboard() {
     }
   };
 
-  // Fetch submissions and exam limits
   useEffect(() => {
     const fetchData = async () => {
       if (!currentUser) return;
@@ -63,10 +109,44 @@ export default function StudentDashboard() {
           where("studentId", "==", currentUser.uid)
         );
         const querySnapshot = await getDocs(q);
-        const allSubs = [];
+        const rawSubs = [];
         querySnapshot.forEach((doc) => {
-          allSubs.push({ id: doc.id, ...doc.data() });
+          rawSubs.push({ id: doc.id, ...doc.data() });
         });
+
+        // 2. Fetch attempt limits, review settings, and questions for unique exams
+        const uniqueExamIds = [...new Set(rawSubs.map((s) => s.examId))];
+        const configs = {};
+        for (const examId of uniqueExamIds) {
+          if (!examId) continue;
+          const examRef = doc(db, "exams", examId);
+          const examSnap = await getDoc(examRef);
+          if (examSnap.exists()) {
+            const data = examSnap.data();
+            configs[examId] = {
+              limit: data.attemptLimit ?? 0,
+              reviewSettings: data.reviewSettings || { mode: 'always' },
+              questions: data.questions
+            };
+          }
+        }
+        setExamConfigs(configs);
+
+        // 3. Recalculate score for all subs using fallback if needed
+        const allSubs = [];
+        for (const sub of rawSubs) {
+          const subId = sub.id;
+          const recalc = recalculateSubmissionScore(sub, configs[sub.examId]?.questions);
+          if (recalc && (recalc.score !== sub.score || recalc.correctCount !== sub.correctCount)) {
+            updateDoc(doc(db, "submissions", subId), {
+              score: recalc.score,
+              correctCount: recalc.correctCount
+            }).catch(err => console.error("Error updating submission score:", err));
+            sub.score = recalc.score;
+            sub.correctCount = recalc.correctCount;
+          }
+          allSubs.push(sub);
+        }
 
         // Sắp xếp theo thứ tự thời gian tăng dần để tính toán số lần thực hiện chính xác
         allSubs.sort((a, b) => {
@@ -98,22 +178,6 @@ export default function StudentDashboard() {
         // Lọc bỏ những bài làm đã bị học sinh xóa (ẩn đi đối với học sinh)
         const visibleSubs = processedSubs.filter(sub => !sub.deletedByStudent);
         setSubmissions(visibleSubs);
-
-        // 2. Fetch attempt limits and review settings for unique exams
-        const uniqueExamIds = [...new Set(visibleSubs.map((s) => s.examId))];
-        const configs = {};
-        for (const examId of uniqueExamIds) {
-          const examRef = doc(db, "exams", examId);
-          const examSnap = await getDoc(examRef);
-          if (examSnap.exists()) {
-            const data = examSnap.data();
-            configs[examId] = {
-              limit: data.attemptLimit ?? 0,
-              reviewSettings: data.reviewSettings || { mode: 'always' }
-            };
-          }
-        }
-        setExamConfigs(configs);
       } catch (error) {
         console.error("Lỗi khi tải dữ liệu:", error);
       } finally {
@@ -132,6 +196,20 @@ export default function StudentDashboard() {
         setSubmissions(prev => prev.filter(s => s.id !== id));
       } catch (error) {
         console.error("Lỗi khi xóa lịch sử:", error);
+        alert("Không thể xóa lúc này, vui lòng thử lại sau.");
+      }
+    }
+  };
+
+  const handleDeleteAllSubmissions = async () => {
+    if (window.confirm("Bạn có chắc chắn muốn xóa TẤT CẢ lịch sử làm bài? Hành động này không thể hoàn tác.")) {
+      try {
+        await Promise.all(submissions.map(sub => 
+          updateDoc(doc(db, "submissions", sub.id), { deletedByStudent: true })
+        ));
+        setSubmissions([]);
+      } catch (error) {
+        console.error("Lỗi khi xóa tất cả lịch sử:", error);
         alert("Không thể xóa lúc này, vui lòng thử lại sau.");
       }
     }
@@ -192,8 +270,17 @@ export default function StudentDashboard() {
       </div>
 
       {/* Lịch sử học tập */}
-      <div className="mb-4">
+      <div className="mb-4 flex items-center justify-between">
         <h3 className="text-xl font-bold text-gray-900">Lịch sử học tập</h3>
+        {submissions.length > 0 && (
+          <button
+            onClick={handleDeleteAllSubmissions}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 font-bold rounded-lg transition-colors text-sm"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span className="hidden sm:inline">Xóa tất cả</span>
+          </button>
+        )}
       </div>      {submissions.length === 0 ? (
         <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-gray-200 shadow-sm">
           <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -264,13 +351,13 @@ export default function StudentDashboard() {
                       <td className="p-5 text-right">
                         <div className="flex justify-end items-center gap-3">
                           {isReviewLocked ? (
-                              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1 cursor-not-allowed" title="Chưa đến thời gian xem lại hoặc giáo viên không cho phép">
+                              <span className="text-sm font-medium text-gray-400 flex items-center gap-1 cursor-not-allowed" title="Chưa đến thời gian xem lại hoặc giáo viên không cho phép">
                                   Đang khóa
                               </span>
                           ) : (
                               <Link
                                 to={`/student/review/${sub.id}`}
-                                className="text-xs font-black text-blue-600 hover:underline uppercase tracking-wider"
+                                className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline transition-colors"
                               >
                                 Xem chi tiết
                               </Link>
@@ -278,14 +365,14 @@ export default function StudentDashboard() {
                           <button
                             onClick={() => navigate(`/student/exam/${sub.examId}`)}
                             disabled={isLimitReached}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                            className={`flex items-center gap-1.5 text-sm font-medium transition-colors ${
                                 isLimitReached
-                                    ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                                    : "bg-blue-50 text-blue-600 hover:bg-blue-100"
+                                    ? "text-gray-400 cursor-not-allowed"
+                                    : "text-blue-600 hover:text-blue-800 hover:underline"
                             }`}
                             title={isLimitReached ? "Hết lượt làm bài" : "Làm lại đề thi"}
                           >
-                            <RefreshCw className="w-3.5 h-3.5" />
+                            <RefreshCw className="w-4 h-4" />
                             <span className="hidden sm:inline">{isLimitReached ? "Hết lượt" : "Làm lại"}</span>
                           </button>
                           <button
