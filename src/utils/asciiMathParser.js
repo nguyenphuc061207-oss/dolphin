@@ -175,6 +175,7 @@ const AM_SYMBOLS = [
     // ── Misc ──
     ['sqrt', '\\sqrt'],
     ['root', '\\sqrt'],
+    ['frac', '\\frac'],
     ['abs', '\\left|'],
     ['norm', '\\left\\|'],
     ['floor', '\\lfloor'],
@@ -291,6 +292,50 @@ function tokenize(input) {
 
 // ─── Parser / Converter ─────────────────────────────────────────────────────
 
+function isMatrixLike(s) {
+    if (!s.startsWith('(')) return false;
+    let depth = 0;
+    for (let ci = 0; ci < s.length; ci++) {
+        const ch = s[ci];
+        if (ch === '(') depth++;
+        else if (ch === ')') {
+            depth--;
+            if (depth === 0 && ci < s.length - 1) {
+                const rest = s.slice(ci + 1).trimStart();
+                if (rest.startsWith(',(')) return true;
+            }
+        }
+    }
+    return false;
+}
+
+function extractMatrixRows(s) {
+    const rows = [];
+    let depth = 0, start = -1;
+    for (let ci = 0; ci < s.length; ci++) {
+        const ch = s[ci];
+        if (ch === '(' && depth === 0)      { depth = 1; start = ci + 1; }
+        else if (ch === '(')                { depth++; }
+        else if (ch === ')' && depth === 1) { depth = 0; rows.push(s.slice(start, ci)); }
+        else if (ch === ')')                { depth--; }
+    }
+    return rows;
+}
+
+function splitTopLevelCommas(s) {
+    const parts = [];
+    let depth = 0, current = '';
+    for (let ci = 0; ci < s.length; ci++) {
+        const ch = s[ci];
+        if ('([{'.includes(ch))      { depth++; current += ch; }
+        else if (')]}'.includes(ch)) { depth--; current += ch; }
+        else if (ch === ',' && depth === 0) { parts.push(current.trim()); current = ''; }
+        else                         { current += ch; }
+    }
+    if (current.trim()) parts.push(current.trim());
+    return parts;
+}
+
 function amToLatex(expr) {
     if (!expr || !expr.trim()) return '';
 
@@ -318,6 +363,15 @@ function amToLatex(expr) {
 
     const skipSpaces = () => {
         while (i < tokens.length && tokens[i].type === 'space') i++;
+    };
+
+    // Helper dùng lại trong handlers
+    const collectArg = () => {
+        skipSpaces();
+        if (i >= tokens.length) return null;
+        if (tokens[i].value === '(') { i++; return collectGroup('('); }
+        if (tokens[i].value === '{') { i++; return collectGroup('{'); }
+        return null;
     };
 
     while (i < tokens.length) {
@@ -380,14 +434,13 @@ function amToLatex(expr) {
             if (tok.value === '(') {
                 i++;
                 const inner = collectGroup('(');
-                if (/^\(.*\)(?:\s*,\s*\(.*\))+$/.test(inner.trim())) {
-                    const rows = [];
-                    const rowRegex = /\(([^)]*)\)/g;
-                    let rm;
-                    while ((rm = rowRegex.exec(inner)) !== null) {
-                        rows.push(rm[1].split(',').map(c => amToLatex(c.trim())).join(' & '));
-                    }
-                    result += `\\begin{pmatrix}${rows.join(' \\\\ ')}\\end{pmatrix}`;
+                // Fix 5: dùng helper thay regex
+                if (isMatrixLike(inner.trim())) {
+                    const rows = extractMatrixRows(inner);
+                    const latexRows = rows.map(row =>
+                        splitTopLevelCommas(row).map(c => amToLatex(c)).join(' & ')
+                    );
+                    result += `\\begin{pmatrix}${latexRows.join(' \\\\ ')}\\end{pmatrix}`;
                 } else {
                     result += `\\left(${amToLatex(inner)}\\right)`;
                 }
@@ -407,6 +460,12 @@ function amToLatex(expr) {
                 result += `\\left\\{${amToLatex(inner)}\\right\\}`;
                 continue;
             }
+
+            if (tok.value === '}') { result += '\\}'; i++; continue; }
+
+            // Fix 6: stray ) và ] không bị drop
+            if (tok.value === ')') { result += ')'; i++; continue; }
+            if (tok.value === ']') { result += ']'; i++; continue; }
 
             if (tok.value === '|') {
                 if (i + 1 < tokens.length && tokens[i + 1].value === '|') {
@@ -443,113 +502,121 @@ function amToLatex(expr) {
 
             if (kw === 'sqrt') {
                 i++;
-                skipSpaces();
-                if (i < tokens.length && tokens[i].value === '(') {
-                    i++;
-                    const inner = collectGroup('(');
-                    result += `\\sqrt{${amToLatex(inner)}}`;
-                } else {
-                    result += '\\sqrt';
-                }
+                const inner = collectArg();
+                result += inner !== null ? `\\sqrt{${amToLatex(inner)}}` : '\\sqrt';
                 continue;
             }
 
             if (kw === 'root') {
                 i++;
-                skipSpaces();
-                if (i < tokens.length && tokens[i].value === '(') {
-                    i++;
-                    const degree = collectGroup('(');
-                    skipSpaces();
-                    if (i < tokens.length && tokens[i].value === '(') {
-                        i++;
-                        const radicand = collectGroup('(');
-                        result += `\\sqrt[${amToLatex(degree)}]{${amToLatex(radicand)}}`;
-                    } else {
-                        result += `\\sqrt[${amToLatex(degree)}]{}`;
-                    }
+                const degree = collectArg();
+                if (degree !== null) {
+                    const radicand = collectArg();
+                    result += radicand !== null
+                        ? `\\sqrt[${amToLatex(degree)}]{${amToLatex(radicand)}}`
+                        : `\\sqrt[${amToLatex(degree)}]{}`;
                 } else {
                     result += '\\sqrt';
                 }
                 continue;
             }
 
+            // Fix 1: frac giờ được tokenize đúng là symbol, xử lý ở đây
             if (kw === 'frac') {
                 i++;
-                skipSpaces();
-                if (i < tokens.length && tokens[i].value === '(') {
-                    i++;
-                    const num = collectGroup('(');
-                    skipSpaces();
-                    if (i < tokens.length && tokens[i].value === '(') {
-                        i++;
-                        const den = collectGroup('(');
-                        result += `\\frac{${amToLatex(num)}}{${amToLatex(den)}}`;
-                    } else {
-                        result += `\\frac{${amToLatex(num)}}{}`;
-                    }
+                const num = collectArg();
+                if (num !== null) {
+                    const den = collectArg();
+                    result += den !== null
+                        ? `\\frac{${amToLatex(num)}}{${amToLatex(den)}}`
+                        : `\\frac{${amToLatex(num)}}{}`;
                 } else {
                     result += '\\frac';
                 }
                 continue;
             }
 
-            if (['hat', 'bar', 'vec', 'tilde', 'dot', 'ddot', 'ul'].includes(kw)) {
-                const latexCmd = tok.latex;
+            // Fix 2
+            if (kw === 'floor') {
                 i++;
-                skipSpaces();
-                if (i < tokens.length && tokens[i].value === '(') {
-                    i++;
-                    const inner = collectGroup('(');
-                    result += `${latexCmd}{${amToLatex(inner)}}`;
-                } else if (i < tokens.length) {
-                    result += `${latexCmd}{${tokens[i].latex || tokens[i].value}}`;
-                    i++;
-                } else {
-                    result += latexCmd;
-                }
+                const inner = collectArg();
+                result += inner !== null
+                    ? `\\lfloor ${amToLatex(inner)} \\rfloor`
+                    : '\\lfloor';
                 continue;
             }
 
-            if (['bb', 'bbb', 'cc', 'tt', 'fr', 'sf'].includes(kw)) {
-                const latexCmd = tok.latex;
+            // Fix 2
+            if (kw === 'ceil') {
                 i++;
-                skipSpaces();
-                if (i < tokens.length && tokens[i].value === '(') {
-                    i++;
-                    const inner = collectGroup('(');
-                    result += `${latexCmd}{${amToLatex(inner)}}`;
+                const inner = collectArg();
+                result += inner !== null
+                    ? `\\lceil ${amToLatex(inner)} \\rceil`
+                    : '\\lceil';
+                continue;
+            }
+
+            // Fix 3
+            if (kw === 'cancel') {
+                i++;
+                const inner = collectArg();
+                if (inner !== null) {
+                    result += `\\cancel{${amToLatex(inner)}}`;
                 } else if (i < tokens.length) {
-                    result += `${latexCmd}{${tokens[i].latex || tokens[i].value}}`;
+                    result += `\\cancel{${tokens[i].latex || tokens[i].value}}`;
                     i++;
                 } else {
-                    result += latexCmd;
+                    result += '\\cancel';
                 }
                 continue;
             }
 
             if (kw === 'abs') {
                 i++;
-                skipSpaces();
-                if (i < tokens.length && tokens[i].value === '(') {
-                    i++;
-                    const inner = collectGroup('(');
-                    result += `\\left|${amToLatex(inner)}\\right|`;
-                } else {
-                    result += '\\left|\\right|';
-                }
+                const inner = collectArg();
+                result += inner !== null
+                    ? `\\left|${amToLatex(inner)}\\right|`
+                    : '\\left|\\right|';
                 continue;
             }
 
             if (kw === 'norm') {
                 i++;
-                skipSpaces();
-                if (i < tokens.length && tokens[i].value === '(') {
+                const inner = collectArg();
+                result += inner !== null
+                    ? `\\left\\|${amToLatex(inner)}\\right\\|`
+                    : '\\left\\|\\right\\|';
+                continue;
+            }
+
+            // Fix 4: accent handlers dùng collectArg thay vì chỉ check '('
+            if (['hat', 'bar', 'vec', 'tilde', 'dot', 'ddot', 'ul'].includes(kw)) {
+                const latexCmd = tok.latex;
+                i++;
+                const inner = collectArg();
+                if (inner !== null) {
+                    result += `${latexCmd}{${amToLatex(inner)}}`;
+                } else if (i < tokens.length) {
+                    result += `${latexCmd}{${tokens[i].latex || tokens[i].value}}`;
                     i++;
-                    const inner = collectGroup('(');
-                    result += `\\left\\|${amToLatex(inner)}\\right\\|`;
                 } else {
-                    result += '\\left\\|\\right\\|';
+                    result += latexCmd;
+                }
+                continue;
+            }
+
+            // Fix 4: font handlers dùng collectArg
+            if (['bb', 'bbb', 'cc', 'tt', 'fr', 'sf'].includes(kw)) {
+                const latexCmd = tok.latex;
+                i++;
+                const inner = collectArg();
+                if (inner !== null) {
+                    result += `${latexCmd}{${amToLatex(inner)}}`;
+                } else if (i < tokens.length) {
+                    result += `${latexCmd}{${tokens[i].latex || tokens[i].value}}`;
+                    i++;
+                } else {
+                    result += latexCmd;
                 }
                 continue;
             }
@@ -573,7 +640,13 @@ function amToLatex(expr) {
         }
 
         if (tok.type === 'char') {
-            result += tok.value;
+            const specialChars = {
+                '#': '\\#',
+                '%': '\\%',
+                '&': '\\&',
+                '$': '\\$'
+            };
+            result += specialChars[tok.value] || tok.value;
             i++;
             continue;
         }
@@ -591,6 +664,10 @@ export function convertAsciiMathToLatex(text) {
     if (!text) return text;
 
     let result = text.replace(/`([^`\n]+)`/g, (match, content) => {
+        // Nếu chứa dấu gạch chéo ngược '\', đây rất có thể là LaTeX nguyên bản, bọc trong $...$
+        if (content.includes('\\')) {
+            return `$${content}$`;
+        }
         if (looksLikeAsciiMath(content)) {
             const latex = amToLatex(content);
             return `$${latex}$`;

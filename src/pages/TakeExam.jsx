@@ -274,6 +274,19 @@ export default function TakeExam() {
     }
   }, [exam?.questions, hasStarted]);
 
+  // Save progress periodically
+  useEffect(() => {
+    if (hasStarted && examId && !isSubmittingRef.current && exam) {
+      const progressKey = `exam_progress_${examId}_${currentUser?.uid || 'anonymous'}`;
+      localStorage.setItem(progressKey, JSON.stringify({
+        userAnswers,
+        timeLeft,
+        cheatCount,
+        examSnapshot: exam.questions
+      }));
+    }
+  }, [userAnswers, timeLeft, cheatCount, hasStarted, examId, currentUser, exam]);
+
 
 
   const handleResume = async () => {
@@ -370,6 +383,11 @@ export default function TakeExam() {
         submittedAt: serverTimestamp(),
         attemptNumber: submissionCount + 1,
       });
+
+      // Xóa tiến trình đã lưu sau khi nộp bài thành công
+      const progressKey = `exam_progress_${examId}_${currentUser?.uid || 'anonymous'}`;
+      localStorage.removeItem(progressKey);
+
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
       alert(`Nộp bài thành công!\nĐiểm: ${score}/10 (${correct}/${gradable} câu đúng)`);
       navigate("/student");
@@ -517,6 +535,21 @@ export default function TakeExam() {
                   }
                   if (inputPassword.trim() !== exam.password.trim()) {
                     return alert("Mật khẩu đề thi không chính xác! Vui lòng thử lại.");
+                  }
+                }
+
+                // Khôi phục tiến trình làm bài nếu có
+                const progressKey = `exam_progress_${examId}_${currentUser?.uid || 'anonymous'}`;
+                const saved = localStorage.getItem(progressKey);
+                if (saved) {
+                  try {
+                    const parsed = JSON.parse(saved);
+                    if (parsed.userAnswers) setUserAnswers(parsed.userAnswers);
+                    if (parsed.timeLeft !== undefined && parsed.timeLeft > 0) setTimeLeft(parsed.timeLeft);
+                    if (parsed.cheatCount !== undefined) setCheatCount(parsed.cheatCount);
+                    if (parsed.examSnapshot) setExam(prev => ({ ...prev, questions: parsed.examSnapshot }));
+                  } catch (e) {
+                    console.error("Error loading progress", e);
                   }
                 }
 
