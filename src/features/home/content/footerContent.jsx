@@ -64,8 +64,8 @@ export const footerDocuments = {
           <h4 className="font-bold text-blue-900 mb-3">Thông tin liên hệ:</h4>
           <div className="flex items-center gap-3">
             <span className="font-semibold text-gray-800">Zalo Hỗ trợ:</span> 
-            <a href="https://zalo.me/0564213425" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline font-bold bg-white px-4 py-2 rounded-lg shadow-sm">
-              0564213425
+            <a href="https://zalo.me/0328635738" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline font-bold bg-white px-4 py-2 rounded-lg shadow-sm">
+              0328635738
             </a>
           </div>
         </div>

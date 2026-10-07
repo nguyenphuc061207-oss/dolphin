@@ -36,7 +36,7 @@ export default function DolphinAssistant() {
       console.error("Gemini API Error:", error);
       setMessages(prev => [...prev, { 
         sender: 'ai', 
-        text: `Xin lỗi, mình gặp sự cố kỹ thuật. Bạn thử lại sau hoặc liên hệ Zalo 0564213425 nhé!`,
+        text: `Xin lỗi, mình gặp sự cố kỹ thuật. Bạn thử lại sau hoặc liên hệ Zalo 0328635738 nhé!`,
         time: getTimestamp()
       }]);
     } finally {
