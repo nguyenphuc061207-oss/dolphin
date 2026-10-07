@@ -29,8 +29,13 @@
 .app-shell { position: relative; isolation: isolate; }
 .ambient-effects { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; contain: strict; }
 .ambient-effects > * { position: absolute; pointer-events: none; }
-:root[data-appearance-quality="ultra"] .landing { background: transparent; }
-:root[data-appearance-quality="ultra"] .teacher-layout { background: transparent; }
+/* Every route shares the shell sky; only the outer page canvas is transparent.
+   Cards, editors, menus and dialogs retain their opaque reading surfaces. */
+.app-shell[data-exam-active="false"] > .app-page-content > * {
+  background-color: transparent;
+  background-image: none;
+}
+.app-shell[data-exam-active="true"] > .app-page-content { background: var(--canvas); }
 
 /* ══════════ NIGHT – Antarctic sky ══════════ */
 .night-gradient { inset: 0; background:

@@ -1,6 +1,6 @@
 import { Plus, Trash2, ChevronUp, ChevronDown, Check } from 'lucide-react';
 import RichTextEditor from '@/shared/components/RichTextEditor';
-import { htmlToPlain } from '@/shared/utils/richText';
+import { htmlToPlain, normalizeExplanation } from '@/shared/utils/richText';
 
 export const TYPE_OPTIONS = [
     { value: 'single', label: 'Trắc nghiệm (1 đáp án)' },
@@ -178,10 +178,11 @@ export default function QuestionEditorCard({ question, onChange, onDone, onDelet
                 </div>
             )}
 
-            <details open={!!q.explanation} className="text-xs">
-                <summary className="cursor-pointer text-gray-500 font-bold select-none">Lời giải / ghi chú (không bắt buộc)</summary>
+            <details defaultOpen={!!normalizeExplanation(q.explanation)} className="text-xs">
+                <summary className="cursor-pointer text-gray-500 font-bold select-none">Giải thích (không bắt buộc)</summary>
                 <div className="mt-2">
-                    <RichTextEditor value={q.explanation || ''} onChange={(v) => set({ explanation: v })} placeholder="Lời giải chi tiết…" minHeight={56} />
+                    <p className="text-gray-500 mb-2">Chỉ hiển thị khi có nội dung và học sinh được phép xem lại bài.</p>
+                    <RichTextEditor value={q.explanation || ''} onChange={(v) => set({ explanation: v })} placeholder="Nhập giải thích, công thức hoặc hình minh họa…" minHeight={56} />
                 </div>
             </details>
         </div>

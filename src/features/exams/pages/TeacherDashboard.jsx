@@ -1,3 +1,4 @@
+import QuestionExplanation from '../components/QuestionExplanation';
 import { mapConcurrent, storageOperation } from '@/shared/utils/runtimeSafety';
 import AccountMenu from '@/shared/components/AccountMenu';
 import { validateQuestions } from '../utils/examSafety';
@@ -14,7 +15,7 @@ import { parseQuestionsFromHtml } from "../parsers/questionParser";
 import { extractTxtToHtml, plainTextToHtml } from "../parsers/txtExtractor";
 import QuestionEditorCard, { MoveButtons, convertQuestionType, getQuestionIssues } from "../components/QuestionEditorCard";
 import RichTextEditor from "@/shared/components/RichTextEditor";
-import { htmlToPlain } from "@/shared/utils/richText";
+import { htmlToPlain, normalizeQuestionExplanation, normalizeExplanation } from "@/shared/utils/richText";
 import RichTextRenderer from "@/shared/components/RichTextRenderer";
 import useDocumentTitle from "@/shared/hooks/useDocumentTitle";
 import {
@@ -152,6 +153,7 @@ export default function TeacherDashboard() {
     const [manualType, setManualType] = useState("single");
     const [options, setOptions] = useState(["", "", "", ""]);
     const [correctAnswer, setCorrectAnswer] = useState(0);
+    const [manualExplanation, setManualExplanation] = useState("");
     const [scoringMethod, setScoringMethod] = useState("linear");
     const [importText, setImportText] = useState("");
     const [isFileProcessing, setIsFileProcessing] = useState(false);
@@ -544,6 +546,7 @@ export default function TeacherDashboard() {
             return alert("Vui lòng chọn ít nhất một đáp án đúng!");
         }
 
+        const explanation = normalizeExplanation(manualExplanation);
         setQuestions([
             ...questions,
             {
@@ -551,12 +554,14 @@ export default function TeacherDashboard() {
                 options: manualType === 'essay' ? [] : options,
                 correctAnswer: correctAnswer,
                 type: manualType,
-                ...(manualType === 'multi_true_false' && { scoringMethod })
+                ...(manualType === 'multi_true_false' && { scoringMethod }),
+                ...(explanation && { explanation })
             }
         ]);
 
         // Reset form
         setCurrentQText("");
+        setManualExplanation("");
         if (manualType === 'essay') {
             setOptions([]);
             setCorrectAnswer('');
@@ -783,7 +788,7 @@ const handleSaveExam = async () => {
     setIsSubmitting(true);
     try {
         validateQuestions(questions);
-        const finalQuestions = await uploadAllImagesInQuestions(questions);
+        const finalQuestions = await uploadAllImagesInQuestions(questions.map(normalizeQuestionExplanation));
 
         await addDoc(collection(db, "exams"), {
             teacherId: currentUser.uid,
@@ -1103,16 +1108,24 @@ return (
                                             </div>
                                         )}
 
+                                        <details defaultOpen={!!normalizeExplanation(manualExplanation)} className="text-xs">
+                                            <summary className="cursor-pointer text-gray-500 font-bold select-none">Giải thích (không bắt buộc)</summary>
+                                            <div className="mt-2">
+                                                <p className="text-gray-500 mb-2">Chỉ hiển thị khi có nội dung và học sinh được phép xem lại bài.</p>
+                                                <RichTextEditor value={manualExplanation} onChange={setManualExplanation} placeholder="Nhập giải thích, công thức hoặc hình minh họa…" minHeight={56} />
+                                            </div>
+                                        </details>
+
                                         <button onClick={handleAddQuestion} className="w-full py-4 bg-gray-900 text-white rounded-xl font-bold hover:bg-black transition-all flex items-center justify-center gap-2 shadow-md">
                                             <Plus className="w-5 h-5" /> Thêm vào đề thi <kbd className="kbd-hint">Ctrl + Enter</kbd>
                                         </button>
                                     </div>
                                 ) : questionTab === 'text' ? (
                                     <div className="space-y-4">
-                                        <textarea value={importText} onChange={(e) => setImportText(e.target.value)} rows={8} className="w-full p-4 bg-purple-50/30 border border-purple-100 rounded-xl outline-none font-mono text-sm resize-none focus:ring-2 focus:ring-purple-400 focus:border-transparent transition-shadow" placeholder={`Câu 1: Thủ đô của Việt Nam là gì?\nA. Hà Nội\nB. Hồ Chí Minh\nC. Đà Nẵng\nD. Huế\nĐáp án: A\n\nCâu 2: ...`} />
+                                        <textarea value={importText} onChange={(e) => setImportText(e.target.value)} rows={8} className="w-full p-4 bg-purple-50/30 border border-purple-100 rounded-xl outline-none font-mono text-sm resize-none focus:ring-2 focus:ring-purple-400 focus:border-transparent transition-shadow" placeholder={`Câu 1: Thủ đô của Việt Nam là gì?\nA. Hà Nội\nB. Hồ Chí Minh\nC. Đà Nẵng\nD. Huế\nĐáp án: A\nGiải thích: Hà Nội là thủ đô của Việt Nam.\n\nCâu 2: ...`} />
                                         <div className="flex items-start gap-2 text-[11px] text-gray-400">
                                             <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                                            <span>Hỗ trợ: <b>Đáp án: A</b> (1 đáp), <b>Đáp án: A, B</b> (nhiều đáp), <b>[Loại: Tự luận]</b>, <b>[Loại: Đúng/Sai]</b>, <b>[Loại: Chọn nhiều]</b></span>
+                                            <span>Hỗ trợ: <b>Đáp án: A</b> (1 đáp), <b>Đáp án: A, B</b> (nhiều đáp), <b>Giải thích:</b> (lời giải), <b>[Loại: Tự luận]</b>, <b>[Loại: Đúng/Sai]</b>, <b>[Loại: Chọn nhiều]</b></span>
                                         </div>
                                         <button onClick={handleProcessImportText} className="w-full py-4 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 transition-all flex items-center justify-center gap-2 shadow-md shadow-purple-200">
                                             <Zap className="w-5 h-5" /> Nhận diện câu hỏi
@@ -1283,6 +1296,7 @@ return (
                                                                 })}
                                                             </div>
                                                         )}
+                                                        <QuestionExplanation content={q.explanation} mathDict={mathDictionary} compact />
                                                     </div>
                                                 );
                                             })}
@@ -1354,6 +1368,7 @@ return (
                                                                     })}
                                                                 </div>
                                                             )}
+                                                            <QuestionExplanation content={q.explanation} mathDict={mathDictionary} compact />
                                                         </div>
                                                         <div className="flex items-center gap-1 shrink-0">
                                                             <button type="button" onClick={() => setEditingQuestionIdx(idx)} className="text-[10px] font-bold px-2 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100">Sửa</button>

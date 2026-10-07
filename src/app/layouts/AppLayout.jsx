@@ -19,7 +19,7 @@ export default function AppLayout({ children }) {
     <div className="app-shell min-h-screen flex flex-col" data-exam-active={isTakeExamPage}>
       {quality === 'ultra' && !isTakeExamPage && <AmbientEffects />}
       {!isTeacherPage && !isTakeExamPage && <Navigation />}
-      <main id="main-content" className="flex-1" tabIndex={-1}>
+      <main id="main-content" className="app-page-content flex-1" tabIndex={-1}>
         {children}
       </main>
       {!isTakeExamPage && <DolphinAssistant />}

@@ -1,3 +1,4 @@
+import QuestionExplanation from '../components/QuestionExplanation';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import { withTimeout, timestampMillis } from '@/shared/utils/runtimeSafety';
 import { validateQuestions } from '../utils/examSafety';
@@ -305,7 +306,7 @@ export default function ReviewExam() {
                                                 if (isMultiTF) {
                                                     if (isAnswered && isCorrectOpt) {
                                                         cardClass = "bg-emerald-50 border-emerald-500 text-emerald-900 font-bold ring-1 ring-emerald-500 shadow-sm shadow-emerald-100";
-                                                        circleClass = "bg-emerald-500 border-emerald-500 text-white";
+                                                        circleClass = "review-answer-correct";
                                                     } else if (isAnswered && !isCorrectOpt) {
                                                         cardClass = "bg-red-50 border-red-500 text-red-900 font-bold ring-1 ring-red-500 shadow-sm shadow-red-100";
                                                         circleClass = "bg-red-500 border-red-500 text-white";
@@ -316,7 +317,7 @@ export default function ReviewExam() {
                                                 } else {
                                                     if (isCorrectOpt) {
                                                         cardClass = "bg-emerald-50 border-emerald-500 text-emerald-900 font-bold ring-1 ring-emerald-500 shadow-sm shadow-emerald-100";
-                                                        circleClass = "bg-emerald-500 border-emerald-500 text-white";
+                                                        circleClass = "review-answer-correct";
                                                     } else if (isAnswered) {
                                                         cardClass = "bg-red-50 border-red-500 text-red-900 font-bold ring-1 ring-red-500 shadow-sm shadow-red-100";
                                                         circleClass = "bg-red-500 border-red-500 text-white";
@@ -381,6 +382,8 @@ export default function ReviewExam() {
                                             })}
                                         </div>
                                     )}
+
+                                    <QuestionExplanation content={question.explanation} mathDict={submission.mathDictionary} />
                                 </div>
                             );
                         })

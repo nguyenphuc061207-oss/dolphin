@@ -91,3 +91,18 @@ export function htmlToPlain(html) {
     const doc = new DOMParser().parseFromString(`<body>${String(html).replace(/<br\s*\/?>/gi, '\n')}</body>`, 'text/html');
     return doc.body.textContent || '';
 }
+
+/** Optional explanations: formatting-only HTML and invisible whitespace are empty. */
+export function normalizeExplanation(value) {
+    if (typeof value !== 'string') return '';
+    const content = isRichHtml(value) || /<(?:script|style|iframe|object|embed|noscript|template|head|title|meta|link)\b/i.test(value) ? sanitizeRichHtml(value) : value;
+    const visible = htmlToPlain(content).replace(/[\s\u200B-\u200D\u2060\uFEFF]/g, '');
+    return visible ? content.trim() : '';
+}
+
+/** Omit empty explanations when saving, without changing question order or answers. */
+export function normalizeQuestionExplanation(question) {
+    const { explanation: raw, ...rest } = question;
+    const explanation = normalizeExplanation(raw);
+    return explanation ? { ...rest, explanation } : rest;
+}

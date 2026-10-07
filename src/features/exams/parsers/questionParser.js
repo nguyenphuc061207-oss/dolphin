@@ -30,7 +30,7 @@
 import { normalizeUnicodeToLatex } from '@/shared/math/mathUtils';
 import { convertAsciiMathToLatex } from '@/shared/math/asciiMathParser';
 import { extractMathMLFromText } from '@/shared/math/mathmlParser';
-import { escapeHtml, sanitizeRichHtml } from '@/shared/utils/richText';
+import { escapeHtml, sanitizeRichHtml, normalizeExplanation } from '@/shared/utils/richText';
 import { detectCodeLines, looksLikeCode } from './codeDetector';
 
 // ─────────────────────────────────────────────
@@ -631,6 +631,15 @@ function isMarkedOption(html, offset, markerLen) {
     return rest.length > 0 && rest.every((x) => x.f);
 }
 
+/**
+ * Explanation / solution label at the start of a line:
+ * "Giải thích:", "Lời giải:", "Lời giải chi tiết:", "Hướng dẫn giải:", "HDG:", "Giải:",
+ * "Phân tích:", "Explanation:", "Solution:" (optionally in parentheses/brackets).
+ */
+const EXPLANATION_LABEL = /^[([]?\s*((?:lời\s*)?giải\s*thích(?:\s*chi\s*tiết)?|lời\s*giải(?:\s*chi\s*tiết)?|hướng\s*dẫn(?:\s*giải)?(?:\s*chi\s*tiết)?|hd\s*giải|hdg|giải|phân\s*tích|explanation|solution)\s*[)\]]?\s*[:：]\s*/i;
+/** Same label somewhere after an answer on one line: "Đáp án: A. Giải thích: …" */
+const EXPLANATION_INLINE = /^(.*?)(?:^|\s|[.;,–-])\s*(\(?\s*(?:(?:lời\s*)?giải\s*thích(?:\s*chi\s*tiết)?|lời\s*giải(?:\s*chi\s*tiết)?|hướng\s*dẫn(?:\s*giải)?|hd\s*giải|hdg|giải|explanation|solution)\s*\)?\s*[:：].*)$/i;
+
 const EMBEDDED_ANSWER_REGEX = /^(.*?)(?:^|\s)(đáp\s*án(?:\s*đúng)?|key|chọn|answer)\s*[:.]?\s*(.*)$/i;
 
 /**
@@ -643,10 +652,10 @@ const EMBEDDED_ANSWER_REGEX = /^(.*?)(?:^|\s)(đáp\s*án(?:\s*đúng)?|key|ch�
 export function parseQuestionsFromHtml(html) {
     if (!html?.trim()) return [];
 
-    // 1. Lines of {html, plain}; split embedded "… Đáp án: A" into two lines.
+    // 1. Lines of {html, plain}; split embedded "… Đáp án: A" into two lines and
+    //    "Đáp án: A. Giải thích: …" into answer line + explanation line.
     const lines = [];
-    for (const lineHtml of splitIntoLines(html)) {
-        const plain = linePlain(lineHtml);
+    const pushLine = (lineHtml, plain) => {
         const m = plain.match(EMBEDDED_ANSWER_REGEX);
         if (m) {
             const cleanAfter = m[3].trim().replace(/[.\s]+$/, '');
@@ -658,10 +667,27 @@ export function parseQuestionsFromHtml(html) {
                 }
                 const ansText = `${m[2]}: ${cleanAfter}`;
                 lines.push({ html: escapeHtml(ansText), plain: ansText });
-                continue;
+                return;
             }
         }
         lines.push({ html: lineHtml, plain });
+    };
+    for (const rawHtml of splitIntoLines(html)) {
+        let lineHtml = rawHtml;
+        let plain = linePlain(rawHtml);
+        let tail = null;
+        const ex = !EXPLANATION_LABEL.test(plain.trim()) && plain.match(EXPLANATION_INLINE);
+        if (ex && ex[1].trim()) {
+            const headPlain = ex[1].replace(/[\s.;,–-]+$/, '');
+            if (parseAnswerLine(headPlain) !== -1 || EMBEDDED_ANSWER_REGEX.test(headPlain)) {
+                const [head, rest] = splitHtmlAt(lineHtml, plain.length - ex[2].length);
+                tail = { html: rest, plain: linePlain(rest) };
+                lineHtml = head;
+                plain = linePlain(head);
+            }
+        }
+        pushLine(lineHtml, plain);
+        if (tail) lines.push(tail);
     }
 
     // 2. Answer-key table at the end of the document (Format C)
@@ -696,6 +722,7 @@ export function parseQuestionsFromHtml(html) {
     let cur = null;
     let lastOptionIndex = -1;
     let afterAnswer = false;
+    let inExplanation = false; // after "Giải thích:" every following line belongs to the explanation
 
     const cutMarker = (line, consumedChars) => {
         const lead = line.plain.length - line.plain.replace(/^[\s\uFEFF]+/, '').length;
@@ -707,7 +734,8 @@ export function parseQuestionsFromHtml(html) {
         const trimmed = plain.replace(/^[\s\uFEFF]+/, '');
         const lead = plain.length - trimmed.length;
 
-        const qStart = parseQuestionStart(plain);
+        let qStart = parseQuestionStart(plain);
+        if (qStart && inExplanation && cur && !/^\s*(câu|question|q\.?)\s*\d/i.test(trimmed) && qStart.num !== cur.num + 1) qStart = null;
         if (qStart) {
             if (cur) blocks.push(cur);
             // content text is a suffix of the trimmed line
@@ -724,11 +752,26 @@ export function parseQuestionsFromHtml(html) {
             };
             lastOptionIndex = -1;
             afterAnswer = false;
+            inExplanation = false;
             continue;
         }
         if (!cur) continue;
 
+        const label = trimmed.match(EXPLANATION_LABEL);
+        if (label) {
+            const body = cutMarker(line, label[0].length);
+            if (linePlain(body).trim() || /\[IMG:/.test(body)) cur.explanation += (cur.explanation ? '<br>' : '') + body;
+            inExplanation = true;
+            lastOptionIndex = -1;
+            continue;
+        }
+
         const optLine = parseOptionLine(plain);
+        if (optLine && inExplanation && cur.options[optLine.index] !== undefined) {
+            // "A. sai vì …" inside a solution → explanation text, not a new option
+            cur.explanation += (cur.explanation ? '<br>' : '') + line.html;
+            continue;
+        }
         if (optLine) {
             const clean = trimmed.trimEnd();
             const consumed = clean.length - optLine.text.length;
@@ -752,7 +795,9 @@ export function parseQuestionsFromHtml(html) {
 
         if (IS_ONLY_KEYS_REGEX.test(plain)) continue;
 
-        if (lastOptionIndex >= 0 && cur.options[lastOptionIndex] !== undefined) {
+        if (inExplanation) {
+            cur.explanation += (cur.explanation ? '<br>' : '') + line.html;
+        } else if (lastOptionIndex >= 0 && cur.options[lastOptionIndex] !== undefined) {
             cur.options[lastOptionIndex] += '<br>' + line.html;
         } else if (cur.options.length === 0) {
             cur.content += '<br>' + line.html;
@@ -807,6 +852,7 @@ function finalizeRichBlock(block) {
         content,
         options: base.options.map((_, i) => toMath(block.options[i])),
     };
-    if (block.explanation) out.explanation = toMath(block.explanation);
+    const explanation = normalizeExplanation(toMath(block.explanation));
+    if (explanation) out.explanation = explanation;
     return out;
 }
