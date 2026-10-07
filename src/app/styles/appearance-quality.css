@@ -1,0 +1,195 @@
+/* Quality levels share the same content, layout and appearance preference. */
+.quality-toggle { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
+.quality-toggle button { min-height: 34px; padding: 6px 10px; border-radius: 8px; font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--muted); }
+.quality-toggle button[aria-checked="true"] { color: var(--ink); background: var(--surface); box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+.quality-toggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.account-quality, .sidebar-quality { display: grid; gap: 8px; padding: 8px 12px 12px; font-size: 12px; color: var(--muted); }
+.sidebar-quality { padding-inline: 6px; margin-bottom: 14px; }
+.account-quality .quality-toggle, .sidebar-quality .quality-toggle { justify-content: center; }
+.header-actions { flex-wrap: wrap; }
+
+/* Auto is deliberately monochrome, including semantic accent tokens. */
+:root[data-appearance-quality="auto"] {
+  --accent: #1d1d1f; --accent-hover: #333333; --accent-fill: #1d1d1f; --accent-fill-hover: #333333;
+  --accent-soft: #e8e8ed; --success: #1d1d1f; --danger: #1d1d1f; --warning: #1d1d1f;
+}
+:root[data-theme="dark"][data-appearance-quality="auto"] {
+  --canvas: #121212; --surface: #1e1e1e; --surface-soft: #303030; --ink: #f5f5f5; --muted: #b8b8b8;
+  --line: #707070; --accent: #f5f5f5; --accent-hover: #ffffff; --accent-fill: #404040; --accent-fill-hover: #505050;
+  --accent-soft: #303030; --success: #f5f5f5; --danger: #f5f5f5; --warning: #f5f5f5; --glass: #1e1e1e;
+}
+:root[data-appearance-quality="auto"] .app-shell { background: var(--canvas); }
+:root[data-appearance-quality="auto"] :is(.scene-orbit, .ambient-effects) { display: none; }
+:root[data-appearance-quality="auto"] :is(.exam-preview, .button-primary, .teacher-primary-action) { box-shadow: none; }
+:root[data-appearance-quality="auto"] .teacher-sidebar { background: var(--canvas); }
+:root[data-appearance-quality="auto"] .theme-toggle button[data-active="true"] { background: var(--surface); color: var(--ink); }
+:root[data-appearance-quality="auto"] .app-shell :is([class~="text-emerald-700"], [class~="text-emerald-500"], [class~="text-red-700"]) { color: var(--ink); }
+
+/* Decorative layers never receive input or sit above text and controls. */
+.app-shell { position: relative; isolation: isolate; }
+.ambient-effects { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; contain: strict; }
+.ambient-effects > * { position: absolute; pointer-events: none; }
+:root[data-appearance-quality="ultra"] .landing { background: transparent; }
+:root[data-appearance-quality="ultra"] .teacher-layout { background: transparent; }
+
+/* ══════════ NIGHT – Antarctic sky ══════════ */
+.night-gradient { inset: 0; background:
+  radial-gradient(120% 70% at 50% 110%, #103038 0%, transparent 60%),
+  linear-gradient(180deg, #03111f 0%, #051b2b 45%, #09213b 75%, #0d1730 100%); }
+.milky-way { inset: -30%; transform: rotate(-28deg); opacity: .55;
+  background:
+    radial-gradient(ellipse 60% 9% at 50% 50%, rgba(214,222,255,.16), transparent 70%),
+    radial-gradient(ellipse 40% 5% at 46% 49%, rgba(255,240,220,.12), transparent 70%),
+    radial-gradient(ellipse 22% 3% at 58% 51%, rgba(0,0,0,.35), transparent 70%); }
+.magellanic { border-radius: 50%; filter: blur(6px); background: radial-gradient(circle, rgba(220,226,255,.22), rgba(200,210,255,.06) 55%, transparent 70%); }
+.magellanic.large { left: 14%; top: 58%; width: 120px; height: 80px; transform: rotate(-20deg); }
+.magellanic.small { left: 24%; top: 70%; width: 60px; height: 40px; opacity: .8; }
+
+.star-layer { top: 0; left: 0; border-radius: 50%; background: transparent; animation: star-twinkle var(--dur) ease-in-out infinite alternate; will-change: opacity; }
+.star-layer:nth-of-type(2) { animation-delay: -3s; }
+.star-layer:nth-of-type(3) { animation-delay: -1.5s; }
+@keyframes star-twinkle { 0% { opacity: .45; } 50% { opacity: 1; } 100% { opacity: .7; } }
+
+.bright-star { width: var(--s); height: var(--s); margin: calc(var(--s) / -2) 0 0 calc(var(--s) / -2); border-radius: 50%;
+  background: #fff; box-shadow: 0 0 6px 2px rgba(190,215,255,.85), 0 0 18px 6px rgba(140,180,255,.35);
+  animation: bright-twinkle 4.5s ease-in-out infinite; will-change: transform, opacity; }
+.bright-star::before, .bright-star::after { content: ''; position: absolute; left: 50%; top: 50%; background: linear-gradient(90deg, transparent, rgba(230,240,255,.85), transparent); transform: translate(-50%, -50%); }
+.bright-star::before { width: calc(var(--s) * 7); height: 1px; }
+.bright-star::after { width: 1px; height: calc(var(--s) * 7); background: linear-gradient(180deg, transparent, rgba(230,240,255,.85), transparent); }
+.bright-star:nth-child(2n of .bright-star) { animation-delay: -1.7s; animation-duration: 5.5s; }
+.bright-star:nth-child(3n of .bright-star) { animation-delay: -3.1s; animation-duration: 3.8s; }
+@keyframes bright-twinkle { 0%, 100% { opacity: 1; transform: scale(1); } 45% { opacity: .65; transform: scale(.82); } 60% { opacity: .95; transform: scale(1.08); } }
+
+/* Broad emerald curtains inspired by the reference sky. Only transforms animate. */
+/* Soft moving light (replaces the aurora). Gradients have many stops to avoid colour banding. */
+.night-glow { inset: 0; }
+.glow-orb { position: absolute; left: var(--x); top: var(--y); width: var(--size); height: var(--size); border-radius: 50%;
+  opacity: var(--o); will-change: transform, opacity; backface-visibility: hidden;
+  background: radial-gradient(circle closest-side,
+    rgba(var(--c), 1) 0%, rgba(var(--c), .78) 14%, rgba(var(--c), .52) 30%, rgba(var(--c), .3) 46%,
+    rgba(var(--c), .15) 62%, rgba(var(--c), .06) 78%, rgba(var(--c), .015) 90%, rgba(var(--c), 0) 100%);
+  animation: glow-drift var(--dur) ease-in-out infinite alternate; animation-delay: var(--delay); }
+@keyframes glow-drift {
+  0%   { transform: translate3d(0, 0, 0) scale(1); opacity: var(--o); }
+  33%  { transform: translate3d(6vw, 4vh, 0) scale(1.12); opacity: calc(var(--o) * 1.35); }
+  66%  { transform: translate3d(-4vw, 7vh, 0) scale(.94); opacity: calc(var(--o) * .8); }
+  100% { transform: translate3d(3vw, -3vh, 0) scale(1.06); opacity: calc(var(--o) * 1.2); }
+}
+/* Fine static grain dithers the dark gradients so they never show steps/stripes. */
+.ambient-dark::before { content: ''; position: absolute; inset: 0; z-index: 1; opacity: .05; pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+.ambient-dark::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(4,8,23,.46), rgba(4,8,23,.08) 70%); pointer-events: none; }
+
+/* Meteors: head + glowing tail, random angle/length/speed */
+.meteor { left: var(--x); top: var(--y); width: var(--len); height: 2px; border-radius: 999px; opacity: 0;
+  background: linear-gradient(90deg, #f1fffb, rgba(157,255,222,.6) 18%, rgba(190,215,255,.22) 60%, transparent);
+  transform-origin: 0 50%;
+  animation: meteor-fall var(--dur) cubic-bezier(.3,.6,.4,1) infinite; animation-delay: var(--delay); will-change: transform, opacity; }
+.meteor::after { content: ''; position: absolute; left: -2px; top: 50%; width: 5px; height: 5px; margin-top: -2.5px; border-radius: 50%; background: #fff; box-shadow: 0 0 10px 3px rgba(170,255,221,.9); }
+@keyframes meteor-fall {
+  0%, 82% { transform: rotate(var(--ang)) translate3d(0, 0, 0) scaleX(.2); opacity: 0; }
+  84%     { opacity: 1; }
+  94%     { transform: rotate(var(--ang)) translate3d(calc(var(--dist) * -1), 0, 0) scaleX(1); opacity: .9; }
+  100%    { transform: rotate(var(--ang)) translate3d(calc(var(--dist) * -1.15), 0, 0) scaleX(.6); opacity: 0; }
+}
+
+/* ══════════ DAY – sunlight, clouds, wind, leaves ══════════ */
+.day-gradient { inset: 0; background: linear-gradient(180deg, #dbeeff 0%, #eef6ff 35%, var(--canvas) 75%); }
+.sun-glow { width: 70vmax; height: 70vmax; top: -30vmax; right: -18vmax; border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,246,214,.95) 0%, rgba(255,214,120,.45) 18%, rgba(255,228,170,.18) 42%, transparent 68%);
+  animation: sun-breathe 14s ease-in-out infinite alternate; will-change: transform, opacity; }
+@keyframes sun-breathe { from { transform: translate3d(0, 0, 0) scale(1); opacity: .85; } to { transform: translate3d(-3vw, 2vh, 0) scale(1.08); opacity: 1; } }
+.sun-rays { width: 160vmax; height: 160vmax; top: -80vmax; right: -80vmax; border-radius: 50%; opacity: .5;
+  background: repeating-conic-gradient(from 0deg, rgba(255,236,170,.32) 0deg 3deg, transparent 3deg 11deg);
+  -webkit-mask-image: radial-gradient(circle, #000 0%, rgba(0,0,0,.5) 22%, transparent 48%);
+          mask-image: radial-gradient(circle, #000 0%, rgba(0,0,0,.5) 22%, transparent 48%);
+  animation: sun-rotate 90s linear infinite; will-change: transform; }
+@keyframes sun-rotate { to { transform: rotate(360deg); } }
+.sun-shaft { top: -20vh; right: calc(8vw + var(--i) * 14vw); width: 12vw; height: 140vh; transform-origin: 50% 0;
+  background: linear-gradient(180deg, rgba(255,240,190,.38), rgba(255,240,190,.08) 60%, transparent);
+  filter: blur(8px); opacity: 0; transform: rotate(28deg);
+  animation: sun-shaft 16s ease-in-out infinite; animation-delay: calc(var(--i) * -5.3s); }
+@keyframes sun-shaft { 0%, 100% { opacity: 0; transform: rotate(26deg) translateX(0); } 50% { opacity: .9; transform: rotate(31deg) translateX(-3vw); } }
+
+.cloud { left: 0; top: var(--top); width: var(--cloud-width); height: var(--cloud-height); opacity: var(--o);
+  --cloud-size: var(--scale); transform-origin: 50% 50%;
+  animation: cloud-drift var(--dur) linear infinite; animation-delay: var(--delay); will-change: transform; }
+.cloud-shape { display: block; width: 100%; height: 100%; overflow: visible; }
+@keyframes cloud-drift {
+  from { transform: translate3d(-650px, 0, 0) scale(var(--cloud-size)); }
+  to { transform: translate3d(calc(100vw + 300px), 0, 0) scale(var(--cloud-size)); }
+}
+
+.wind-streak { left: 0; top: var(--top); width: var(--w); height: 46px; opacity: 0;
+  border-top: 1.5px solid rgba(110,140,120,.35); border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 30%, #000 70%, transparent);
+          mask-image: linear-gradient(90deg, transparent, #000 30%, #000 70%, transparent);
+  animation: wind-gust var(--dur) cubic-bezier(.4,0,.2,1) infinite; animation-delay: var(--delay); will-change: transform, opacity; }
+@keyframes wind-gust {
+  0%   { transform: translate3d(-45vw, 0, 0) scaleX(.6); opacity: 0; }
+  20%  { opacity: .9; }
+  60%  { transform: translate3d(55vw, -1.5vh, 0) scaleX(1.1); opacity: .6; }
+  100% { transform: translate3d(130vw, 1vh, 0) scaleX(.8); opacity: 0; }
+}
+
+/* Leaf = outer element follows the wind path, inner body flutters in 3D */
+.leaf { left: var(--left); top: -6vh; width: var(--size); height: calc(var(--size) * 1.6); opacity: 0;
+  animation: leaf-path var(--dur) linear infinite; animation-delay: var(--delay); will-change: transform, opacity; }
+.leaf-body { position: absolute; inset: 0; border-radius: 2px 90% 2px 90%;
+  background: linear-gradient(140deg, var(--c1), var(--c2)); box-shadow: inset -1px -1px 0 rgba(0,0,0,.08);
+  animation: leaf-flutter var(--spin) ease-in-out infinite alternate; transform-style: preserve-3d; }
+.leaf-body::after { content: ''; position: absolute; left: 50%; top: 8%; bottom: 8%; width: 1px; background: rgba(60,80,40,.25); transform: rotate(32deg); }
+@keyframes leaf-path {
+  0%   { transform: translate3d(0, 0, 0); opacity: 0; }
+  6%   { opacity: .85; }
+  25%  { transform: translate3d(calc(var(--drift) * .25 + var(--sway)), 26vh, 0); }
+  45%  { transform: translate3d(calc(var(--drift) * .55 - var(--sway)), 48vh, 0); } /* gust */
+  70%  { transform: translate3d(calc(var(--drift) * .8 + var(--sway)), 74vh, 0); }
+  92%  { opacity: .8; }
+  100% { transform: translate3d(var(--drift), 112vh, 0); opacity: 0; }
+}
+@keyframes leaf-flutter {
+  0%   { transform: rotate3d(1, .3, 0, 0deg) rotate(-25deg); }
+  50%  { transform: rotate3d(1, .3, 0, 65deg) rotate(20deg); }
+  100% { transform: rotate3d(.4, 1, 0, 160deg) rotate(55deg); }
+}
+
+/* This applies to preparation, recovery and the entire attempt, in every quality. */
+.app-shell[data-exam-active="true"] { background-image: none !important; }
+.app-shell[data-exam-active="true"] .ambient-effects { display: none !important; }
+
+/* Lighter load on phones & small tablets */
+@media (max-width: 760px) {
+  .leaf:nth-child(n + 10 of .leaf), .meteor:nth-child(n + 7 of .meteor), .wind-streak:nth-child(n + 5 of .wind-streak) { display: none; }
+  .cloud { --cloud-size: calc(var(--scale) * .65); }
+  .star-layer:nth-of-type(1) { opacity: .7; }
+}
+/* Respect reduced motion: keep a still sky, no moving pieces */
+@media (prefers-reduced-motion: reduce) {
+  .leaf, .wind-streak, .meteor, .sun-shaft { display: none; }
+  .ambient-effects *, .ambient-effects *::before, .ambient-effects *::after { animation: none !important; }
+}
+/* Reduced transparency: drop the soft night glow and sun shafts */
+@media (prefers-reduced-transparency: reduce) {
+  .night-glow, .sun-shaft, .sun-rays { display: none; }
+}
+@media (max-width: 1023px) { .teacher-layout .sidebar-quality { order: 4; flex-basis: 100%; margin: 0; } }
+@media (max-width: 760px) {
+  .site-header .account-dropdown { position: fixed; top: 118px; right: 16px; left: auto; width: min(272px, calc(100vw - 32px)); max-height: calc(100dvh - 134px); overflow-y: auto; }
+  .header-actions .quality-toggle { order: 3; flex-basis: 100%; justify-content: center; }
+  .quality-toggle button { min-height: 40px; }
+}
+
+/* ── Ultra performance ──
+   A backdrop-filter must re-blur whatever moves behind it on every frame. Over an animated sky
+   that is the most expensive thing on the page, so in Ultra the bars become solid instead. */
+:root[data-appearance-quality="ultra"] :is(.site-header, .teacher-layout > div > header, .app-shell header[class~="bg-white"], .app-shell [class*="backdrop-blur"]) {
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+  background-color: color-mix(in srgb, var(--surface) 94%, transparent);
+}
+/* Lighter sky on weak devices */
+.ambient-lite .meteor:nth-child(n + 7 of .meteor),
+.ambient-lite .leaf:nth-child(n + 11 of .leaf),
+.ambient-lite .wind-streak:nth-child(n + 5 of .wind-streak),
+.ambient-lite .sun-shaft, .ambient-lite .magellanic { display: none; }
+.ambient-lite .star-layer:nth-of-type(3) { animation: none; }

@@ -1,0 +1,392 @@
+import { useAuth } from '@/features/auth/hooks/useAuth';
+import { withTimeout, timestampMillis } from '@/shared/utils/runtimeSafety';
+import { validateQuestions } from '../utils/examSafety';
+import { useState, useEffect } from "react";
+import { useParams, Link, useLocation, useNavigate } from "react-router-dom";
+import { db } from "@/shared/config/firebase";
+import { doc, getDoc } from "firebase/firestore";
+import { AlertTriangle, CheckCircle2, XCircle, PenLine } from "lucide-react";
+import RichTextRenderer from "@/shared/components/RichTextRenderer";
+
+const TYPE_LABELS = {
+    single:           { label: 'Trắc nghiệm', color: 'bg-blue-100 text-blue-700' },
+    multiple:         { label: 'Chọn nhiều',  color: 'bg-purple-100 text-purple-700' },
+    true_false:       { label: 'Đúng/Sai',   color: 'bg-amber-100 text-amber-700' },
+    multi_true_false: { label: 'Đúng/Sai Nhiều Ý', color: 'bg-orange-100 text-orange-700' },
+    essay:            { label: 'Tự luận',    color: 'bg-emerald-100 text-emerald-700' },
+};
+
+/** Check correctness for any question type */
+function checkCorrect(q, studentAns) {
+    const type = q.type || 'single';
+    if (type === 'essay') return null; // not auto-gradable
+    if (type === 'multiple') {
+        const ca = Array.isArray(q.correctAnswer) ? [...q.correctAnswer].map(Number).sort((a, b) => a - b).join(',') : '';
+        const sa = Array.isArray(studentAns) ? [...studentAns].map(Number).sort((a, b) => a - b).join(',') : '';
+        return ca === sa && ca !== '';
+    }
+    if (type === 'multi_true_false') {
+        if (!Array.isArray(studentAns)) return false;
+        let correctStmts = 0;
+        for (let j = 0; j < q.options.length; j++) {
+            if (studentAns[j] === q.correctAnswer[j]) correctStmts++;
+        }
+        return correctStmts === q.options.length;
+    }
+    return studentAns != null && studentAns !== '' && Number(studentAns) === Number(q.correctAnswer);
+}
+
+/** Helper to determine if all options are short for grid rendering */
+function isShortOptions(options) {
+    if (!options || options.length === 0) return false;
+    return options.every(opt => {
+        if (!opt) return true;
+        if (opt.includes('[IMG:') || opt.includes('<img')) return false;
+        const cleanText = opt.replace(/<[^>]+>/g, '').replace(/\$/g, '');
+        return cleanText.trim().length < 35;
+    });
+}
+
+export default function ReviewExam() {
+    const { currentUser } = useAuth();
+    const [loadError, setLoadError] = useState('');
+    const { submissionId } = useParams();
+    const location = useLocation();
+    const navigate = useNavigate();
+    const originParam = new URLSearchParams(location.search).get('from'); // 'teacher' | 'student'
+    const hasAppHistory = location.key !== 'default'; // false when opened directly (shared link / new tab / refresh)
+    const [submission, setSubmission] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [examInfo, setExamInfo] = useState(null);
+    const fromTeacher = !!currentUser && examInfo?.teacherId === currentUser.uid;
+    const [filter, setFilter] = useState("all"); // all, correct, incorrect
+
+    // "Quay lại" returns to the page the user actually came from (browser history), never a
+    // hard-coded dashboard. The fallback only applies when there is no history, and follows
+    // the ?from= hint first, then the role.
+    const submissionsPath = submission?.examId ? `/teacher/exam/${submission.examId}/submissions` : '/teacher/exams';
+    const backFallback = originParam === 'teacher'
+        ? submissionsPath
+        : originParam === 'student'
+            ? '/student'
+            : fromTeacher ? submissionsPath : '/student';
+    const goBack = (e) => {
+        e?.preventDefault();
+        if (hasAppHistory) navigate(-1);
+        else navigate(backFallback, { replace: true });
+    };
+    const backLabel = hasAppHistory ? 'Quay lại' : (backFallback === '/student' ? 'Về bảng điểm' : 'Về danh sách bài nộp');
+    const [isReviewLocked, setIsReviewLocked] = useState(false);
+
+    useEffect(() => {
+        let active = true;
+        const fetchReviewData = async () => {
+            setLoading(true); setSubmission(null); setExamInfo(null); setLoadError(''); setIsReviewLocked(true);
+            try {
+                const subSnap = await withTimeout(getDoc(doc(db, 'submissions', submissionId)));
+                if (!subSnap.exists()) throw new Error('Không tìm thấy bài làm.');
+                const data = subSnap.data();
+                const examSnap = await withTimeout(getDoc(doc(db, 'exams', data.examId)));
+                if (!examSnap.exists()) throw new Error('Không xác nhận được quyền xem vì đề thi không còn tồn tại.');
+                const info = examSnap.data();
+                const isOwner = info.teacherId === currentUser?.uid;
+                if (!isOwner && data.studentId !== currentUser?.uid) throw new Error('Bạn không có quyền xem bài làm này.');
+                const rs = info.reviewSettings || { mode: 'always' };
+                const openTime = timestampMillis(rs.time);
+                const locked = !isOwner && (rs.mode === 'never' || (rs.mode === 'after_time' && (!openTime || Date.now() < openTime)));
+                if (!locked) validateQuestions(data.examSnapshot);
+                if (!data.answers || typeof data.answers !== 'object') throw new Error('Bài làm thiếu dữ liệu câu trả lời.');
+                if (!active) return;
+                setExamInfo(info); setIsReviewLocked(locked); setSubmission(data);
+            } catch (error) {
+                console.error('Không tải được bài làm:', error);
+                if (active) setLoadError(error.message || 'Không tải được chi tiết bài làm.');
+            } finally { if (active) setLoading(false); }
+        };
+        fetchReviewData();
+        return () => { active = false; };
+    }, [submissionId, currentUser?.uid]);
+
+
+    if (loading) return (
+        <div className="min-h-screen bg-[#f8fafc] flex items-center justify-center">
+            <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        </div>
+    );
+
+    if (!submission || !Array.isArray(submission.examSnapshot)) return (
+        <div className="min-h-screen bg-[#f8fafc] flex flex-col items-center justify-center p-6 text-center">
+            <AlertTriangle className="w-16 h-16 text-amber-500 mb-4" />
+            <h2 className="text-2xl font-bold text-gray-900">Không hỗ trợ xem chi tiết</h2>
+            <p className="text-gray-500 max-w-md mt-2">{loadError || 'Bài làm này thuộc phiên bản cũ hoặc dữ liệu không đầy đủ, không hỗ trợ xem chi tiết từng câu.'}</p>
+            <Link to={backFallback} onClick={goBack} className="mt-6 px-6 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-200">
+                {backLabel}
+            </Link>
+        </div>
+    );
+
+    if (isReviewLocked && !fromTeacher) return (
+        <div className="min-h-screen bg-[#f8fafc] flex flex-col items-center justify-center p-6 text-center">
+            <div className="w-16 h-16 bg-gray-100 text-gray-500 rounded-2xl flex items-center justify-center mb-6 border border-gray-200 shadow-sm">
+                <AlertTriangle className="w-8 h-8" />
+            </div>
+            <h2 className="text-2xl font-black text-gray-900 tracking-tight">Chi tiết bài làm đang khóa</h2>
+            <p className="text-gray-500 max-w-md mt-3 leading-relaxed font-medium">Giáo viên đã thiết lập không cho phép xem lại hoặc chưa đến thời điểm công bố đáp án của bài thi này.</p>
+            <Link to={backFallback} onClick={goBack} className="mt-8 px-8 py-3.5 bg-gray-900 text-white font-bold rounded-xl hover:bg-black transition-all shadow-lg shadow-gray-200 flex items-center gap-2">
+                {backLabel}
+            </Link>
+        </div>
+    );
+
+    const filteredQuestions = submission.examSnapshot
+        .map((q, i) => ({ ...q, originalIndex: i }))
+        .filter(q => {
+            if (filter === "all") return true;
+            const result = checkCorrect(q, submission.answers[q.originalIndex]);
+            if (result === null) return filter === "all"; // essays only in 'all'
+            return filter === "correct" ? result : !result;
+        });
+
+    return (
+        <div className="min-h-screen bg-[#f8fafc] py-10 px-6">
+            <div className="max-w-4xl mx-auto">
+                {/* Header Card */}
+                <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 mb-8">
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                        <div>
+                            <div className="flex items-center gap-2 mb-2">
+                                <Link to={backFallback} onClick={goBack} className="text-blue-600 hover:text-blue-800 text-sm font-bold flex items-center gap-1 transition-colors">
+                                    &larr; {backLabel}
+                                </Link>
+                                <span className="text-gray-300">/</span>
+                                <span className="text-xs font-black text-gray-400 uppercase tracking-widest">Chi tiết bài làm</span>
+                            </div>
+                            <h1 className="text-3xl font-black text-gray-900 leading-tight">{submission.examTitle}</h1>
+                            <p className="text-gray-500 font-medium mt-1">Học sinh: <span className="text-gray-900 font-bold">{submission.studentName}</span></p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3">
+                            <div className="px-6 py-4 bg-emerald-50 border border-emerald-100 rounded-2xl text-center min-w-[120px]">
+                                <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1">Điểm số</p>
+                                <p className="text-3xl font-black text-emerald-700">{submission.score}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Filters */}
+                <div className="flex items-center gap-3 mb-8 bg-white p-2 rounded-2xl shadow-sm border border-gray-100 sticky top-4 z-40">
+                    <button 
+                        onClick={() => setFilter("all")}
+                        className={`flex-1 py-3 px-4 rounded-xl font-black text-[11px] uppercase tracking-wider transition-all ${filter === 'all' ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-gray-500 hover:bg-gray-50'}`}
+                    >
+                        Tất cả ({submission.examSnapshot.length})
+                    </button>
+                    <button 
+                        onClick={() => setFilter("correct")}
+                        className={`flex-1 py-3 px-4 rounded-xl font-black text-[11px] uppercase tracking-wider transition-all ${filter === 'correct' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-100' : 'text-gray-500 hover:bg-gray-50'}`}
+                    >
+                        Câu đúng ({submission.correctCount})
+                    </button>
+                    <button 
+                        onClick={() => setFilter("incorrect")}
+                        className={`flex-1 py-3 px-4 rounded-xl font-black text-[11px] uppercase tracking-wider transition-all ${filter === 'incorrect' ? 'bg-red-600 text-white shadow-lg shadow-red-100' : 'text-gray-500 hover:bg-gray-50'}`}
+                    >
+                        Câu sai ({submission.examSnapshot.length - submission.correctCount})
+                    </button>
+                </div>
+
+                {/* Question List */}
+                <div className="space-y-6">
+                    {filteredQuestions.length === 0 ? (
+                        <div className="bg-white rounded-3xl p-12 text-center border border-gray-100">
+                            <CheckCircle2 className="w-16 h-16 text-gray-200 mx-auto mb-4" />
+                            <p className="text-gray-400 font-bold text-lg">Không có câu hỏi nào trong danh mục này.</p>
+                        </div>
+                    ) : (
+                        filteredQuestions.map((question) => {
+                            const qIndex = question.originalIndex;
+                            const studentChoice = submission.answers[qIndex];
+                            const qType = question.type || 'single';
+                            const typeInfo = TYPE_LABELS[qType] || TYPE_LABELS.single;
+                            const isEssay = qType === 'essay';
+                            const isMulti = qType === 'multiple';
+                            const result = checkCorrect(question, studentChoice);
+                            // Border/bg by result (essay = neutral)
+                            const cardBorder = result === null
+                                ? 'border-gray-100'
+                                : result ? 'border-emerald-100 shadow-emerald-50/50' : 'border-red-100 shadow-red-50/50';
+
+                            return (
+                                <div key={qIndex} className={`bg-white rounded-3xl p-8 shadow-sm border transition-all ${cardBorder}`}>
+                                                                    <div className="flex justify-between items-center gap-2 mb-3 pb-2 border-b border-gray-100">
+                                        <div className="flex items-center gap-2">
+                                            <p className="text-[13px] font-bold text-gray-900">Câu&nbsp;{qIndex + 1}</p>
+                                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${typeInfo.color}`}>
+                                                {typeInfo.label}
+                                            </span>
+                                        </div>
+                                        <div className="shrink-0 flex items-center gap-2">
+                                            {result === null ? (
+                                                <div className="flex items-center gap-1.5 text-gray-500 font-black bg-gray-50 px-3 py-1.5 rounded-full text-[10px] uppercase tracking-wider border border-gray-200">
+                                                    <PenLine className="w-3.5 h-3.5" /> Tự luận
+                                                </div>
+                                            ) : result ? (
+                                                <div className="flex items-center gap-1.5 text-emerald-600 font-black bg-emerald-50 px-3 py-1.5 rounded-full text-[10px] uppercase tracking-wider border border-emerald-100">
+                                                    <CheckCircle2 className="w-3.5 h-3.5" /> Đúng
+                                                </div>
+                                            ) : (
+                                                <div className="flex items-center gap-1.5 text-red-600 font-black bg-red-50 px-3 py-1.5 rounded-full text-[10px] uppercase tracking-wider border border-red-100">
+                                                    <XCircle className="w-3.5 h-3.5" /> Sai
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="exam-text text-[15px] font-medium mb-4 overflow-x-auto">
+                                        <RichTextRenderer content={question.content} mathDict={submission.mathDictionary} />
+                                    </div>
+
+                                    {/* ── ESSAY: show written answer ── */}
+                                    {isEssay && (
+                                        <div className="bg-gray-50 rounded-2xl p-5 border border-dashed border-gray-200">
+                                            <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1">
+                                                <PenLine className="w-3 h-3" /> Câu trả lời của bạn
+                                            </p>
+                                            <p className="exam-text text-sm whitespace-pre-wrap leading-relaxed">
+                                                {typeof studentChoice === 'string' && studentChoice.trim()
+                                                    ? studentChoice
+                                                    : <span className="italic text-gray-400">(Không có câu trả lời)</span>
+                                                }
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {/* ── MULTI-TRUE-FALSE: scoring method info ── */}
+                                    {qType === 'multi_true_false' && (
+                                        <div className="flex items-center gap-2 p-3 bg-orange-50 rounded-xl border border-orange-100 mb-4 mt-2">
+                                            <AlertTriangle className="w-4 h-4 text-orange-500 shrink-0" />
+                                            <span className="text-xs font-bold text-orange-800 uppercase flex-1">
+                                                Cấu hình chấm điểm: {question.scoringMethod === 'gdpt_2018' ? 'GDPT 2018' : 'Chia đều'}
+                                            </span>
+                                            {question.scoringMethod === 'gdpt_2018' && (
+                                                <span className="text-[10px] text-orange-600 bg-orange-100 px-2 py-0.5 rounded-md font-bold" title="1 ý: 0.1đ | 2 ý: 0.25đ | 3 ý: 0.5đ | 4 ý: 1.0đ">
+                                                    (Quy chuẩn 0.1 - 0.25 - 0.5 - 1.0)
+                                                </span>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* ── SINGLE / MULTIPLE / TRUE-FALSE / MULTI-TRUE-FALSE: options grid ── */}
+                                    {!isEssay && (
+                                        <div className={`grid gap-3 ${isShortOptions(question.options) ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"}`}>
+                                            {question.options.map((option, oIndex) => {
+                                                const isMultiTF = qType === 'multi_true_false';
+                                                
+                                                let isAnswered;
+                                                let isCorrectOpt;
+
+                                                if (isMultiTF) {
+                                                    const stuAns = Array.isArray(studentChoice) ? studentChoice[oIndex] : null;
+                                                    const corAns = question.correctAnswer[oIndex];
+                                                    isAnswered = stuAns !== null && stuAns !== undefined;
+                                                    isCorrectOpt = stuAns === corAns;
+                                                } else {
+                                                    isAnswered = isMulti
+                                                        ? Array.isArray(studentChoice) && studentChoice.map(Number).includes(oIndex)
+                                                        : oIndex === studentChoice;
+                                                    isCorrectOpt = isMulti
+                                                        ? Array.isArray(question.correctAnswer) && question.correctAnswer.map(Number).includes(oIndex)
+                                                        : oIndex === question.correctAnswer;
+                                                }
+
+                                                let cardClass = "bg-gray-50 border-gray-100 text-gray-600";
+                                                let circleClass = "border-gray-300 text-gray-400 bg-white";
+
+                                                if (isMultiTF) {
+                                                    if (isAnswered && isCorrectOpt) {
+                                                        cardClass = "bg-emerald-50 border-emerald-500 text-emerald-900 font-bold ring-1 ring-emerald-500 shadow-sm shadow-emerald-100";
+                                                        circleClass = "bg-emerald-500 border-emerald-500 text-white";
+                                                    } else if (isAnswered && !isCorrectOpt) {
+                                                        cardClass = "bg-red-50 border-red-500 text-red-900 font-bold ring-1 ring-red-500 shadow-sm shadow-red-100";
+                                                        circleClass = "bg-red-500 border-red-500 text-white";
+                                                    } else {
+                                                        cardClass = "bg-orange-50 border-orange-200 text-orange-900";
+                                                        circleClass = "bg-orange-100 border-orange-200 text-orange-700";
+                                                    }
+                                                } else {
+                                                    if (isCorrectOpt) {
+                                                        cardClass = "bg-emerald-50 border-emerald-500 text-emerald-900 font-bold ring-1 ring-emerald-500 shadow-sm shadow-emerald-100";
+                                                        circleClass = "bg-emerald-500 border-emerald-500 text-white";
+                                                    } else if (isAnswered) {
+                                                        cardClass = "bg-red-50 border-red-500 text-red-900 font-bold ring-1 ring-red-500 shadow-sm shadow-red-100";
+                                                        circleClass = "bg-red-500 border-red-500 text-white";
+                                                    }
+                                                }
+
+                                                return (
+                                                    <div key={oIndex} className={`flex items-center gap-4 p-4 rounded-2xl border transition-all ${cardClass}`}>
+                                                        {isMultiTF ? (
+                                                            <div className="shrink-0 flex items-center gap-2">
+                                                                <span className="text-xs font-black mr-1 uppercase">Ý {oIndex + 1}</span>
+                                                                <div className={`px-2 py-1 rounded text-[10px] font-bold border ${circleClass}`}>
+                                                                    {Array.isArray(studentChoice) && studentChoice[oIndex] !== undefined && studentChoice[oIndex] !== null 
+                                                                        ? (studentChoice[oIndex] ? 'ĐÚNG' : 'SAI')
+                                                                        : 'CHƯA CHỌN'
+                                                                    }
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <div className={`option-badge shrink-0 w-8 h-8 flex items-center justify-center rounded-${isMulti ? 'md' : 'full'} border text-xs font-black transition-colors ${circleClass}`}>
+                                                                {String.fromCharCode(65 + oIndex)}
+                                                            </div>
+                                                        )}
+                                                        <div className="exam-text text-[15px] font-medium flex-1 overflow-x-auto">
+                                                            <RichTextRenderer content={option} mathDict={submission.mathDictionary} />
+                                                        </div>
+                                                        {(!isMultiTF && isCorrectOpt && isAnswered) && (
+                                                            <span className="ml-auto flex items-center gap-1 text-emerald-600 text-[9px] font-black uppercase tracking-tighter">
+                                                                <CheckCircle2 className="w-3 h-3" /> Chính xác
+                                                            </span>
+                                                        )}
+                                                        {(!isMultiTF && !isCorrectOpt && isAnswered) && (
+                                                            <span className="ml-auto flex items-center gap-1 text-red-600 text-[9px] font-black uppercase tracking-tighter">
+                                                                <XCircle className="w-3 h-3" /> Bạn đã chọn
+                                                            </span>
+                                                        )}
+                                                        {(!isMultiTF && isCorrectOpt && !isAnswered) && (
+                                                            <span className="ml-auto flex items-center gap-1 text-emerald-600 text-[9px] font-black uppercase tracking-tighter">
+                                                                <CheckCircle2 className="w-3 h-3" /> Đáp án đúng
+                                                            </span>
+                                                        )}
+                                                        {(isMultiTF && isAnswered && isCorrectOpt) && (
+                                                            <span className="ml-auto flex items-center gap-1 text-emerald-600 text-[9px] font-black uppercase tracking-tighter">
+                                                                <CheckCircle2 className="w-3 h-3" /> Chính xác
+                                                            </span>
+                                                        )}
+                                                        {(isMultiTF && isAnswered && !isCorrectOpt) && (
+                                                            <div className="ml-auto flex flex-col items-end gap-0.5">
+                                                                <span className="flex items-center gap-1 text-red-600 text-[9px] font-black uppercase tracking-tighter">
+                                                                    <XCircle className="w-3 h-3" /> Sai
+                                                                </span>
+                                                                <span className="text-[8px] text-gray-500 uppercase font-bold">Đáp án: {question.correctAnswer[oIndex] ? 'ĐÚNG' : 'SAI'}</span>
+                                                            </div>
+                                                        )}
+                                                        {(isMultiTF && !isAnswered) && (
+                                                            <span className="ml-auto flex items-center gap-1 text-gray-400 text-[9px] font-black uppercase tracking-tighter">
+                                                                Đáp án: {question.correctAnswer[oIndex] ? 'ĐÚNG' : 'SAI'}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
