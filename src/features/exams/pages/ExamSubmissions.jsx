@@ -1,8 +1,10 @@
 import { withTimeout, timestampDate, timestampMillis } from '@/shared/utils/runtimeSafety';
+import { useAuth } from '@/features/auth/hooks/useAuth';
+import { ownsExam, accessErrorMessage } from '../utils/examAccess';
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { db } from "@/shared/config/firebase";
-import { collection, query, where, getDocs, deleteDoc, doc, getDoc } from "firebase/firestore";
+import { collection, query, where, getDocsFromServer, deleteDoc, doc, getDocFromServer } from "firebase/firestore";
 import { Trash2, Eye, Download, ChevronLeft } from "lucide-react";
 import TeacherSidebar from '../components/TeacherSidebar';
 import AccountMenu from '@/shared/components/AccountMenu';
@@ -20,6 +22,9 @@ const getAttemptNumber = (sub, allSubs) => {
 
 export default function ExamSubmissions() {
     const { examId } = useParams();
+    const { currentUser } = useAuth();
+    const accessKey = `${currentUser?.uid || ''}/${examId}`;
+    const [loadedFor, setLoadedFor] = useState(null);
     const [submissions, setSubmissions] = useState([]);
     const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -31,28 +36,19 @@ export default function ExamSubmissions() {
         const request = ++fetchGeneration.current;
         setLoading(true); setLoadError(''); setExam(null); setExamTitle(''); setSubmissions([]);
         try {
-            // Fetch cấu hình đề thi để kiểm tra tính năng giám sát
-            let examData = null;
-            try {
-                const examSnap = await withTimeout(getDoc(doc(db, "exams", examId)));
-                if (request !== fetchGeneration.current) return;
-                if (examSnap.exists()) {
-                    examData = examSnap.data();
-                    setExam(examData);
-                    setExamTitle(examData.title);
-                }
-            } catch (error) {
-                console.error('Không tải được cấu hình đề:', error);
-                if (request !== fetchGeneration.current) return;
-                setLoadError('Chưa tải được cấu hình đề thi. Danh sách bên dưới giữ nguyên điểm đã lưu.');
-            }
+            if (!currentUser?.uid) throw new Error('Vui lòng đăng nhập để xem bài nộp.');
+            const examSnap = await withTimeout(getDocFromServer(doc(db, 'exams', examId)));
+            if (!examSnap.exists()) throw new Error('Không tìm thấy đề thi.');
+            const examData = examSnap.data();
+            if (!ownsExam(currentUser.uid, examData)) throw new Error('Bạn không có quyền xem danh sách bài nộp của đề thi này.');
+            if (request !== fetchGeneration.current) return;
 
             const q = query(
                 collection(db, "submissions"),
                 where("examId", "==", examId)
             );
 
-            const querySnapshot = await withTimeout(getDocs(q));
+            const querySnapshot = await withTimeout(getDocsFromServer(q));
             if (request !== fetchGeneration.current) return;
             const subs = [];
             for (const docSnap of querySnapshot.docs) {
@@ -62,20 +58,19 @@ export default function ExamSubmissions() {
                 subs.push({ id: subId, ...data });
             }
 
-            if (subs.length > 0 && !examData) {
-                setExamTitle(subs[0].examTitle);
-            }
+            setExam(examData);
+            setExamTitle(examData.title);
 
             // Sắp xếp điểm từ cao xuống thấp
             subs.sort((a, b) => b.score - a.score);
             setSubmissions(subs);
         } catch (error) {
             console.error("Lỗi khi tải dữ liệu thống kê:", error);
-            if (request === fetchGeneration.current) setLoadError('Không tải được danh sách bài nộp. Vui lòng thử lại.');
+            if (request === fetchGeneration.current) setLoadError(accessErrorMessage(error, 'Không tải được danh sách bài nộp. Vui lòng thử lại.'));
         } finally {
-            if (request === fetchGeneration.current) setLoading(false);
+            if (request === fetchGeneration.current) { setLoadedFor(accessKey); setLoading(false); }
         }
-    }, [examId]);
+    }, [examId, currentUser?.uid, accessKey]);
 
     useEffect(() => {
         let active = true;
@@ -84,6 +79,7 @@ export default function ExamSubmissions() {
     }, [fetchSubmissions]);
 
     const handleDeleteSubmission = async (id) => {
+        if (loadedFor !== accessKey || !ownsExam(currentUser?.uid, exam)) return;
         if (window.confirm("Bạn có chắc muốn xóa kết quả của học sinh này?")) {
             try {
                 await deleteDoc(doc(db, "submissions", id));
@@ -97,6 +93,7 @@ export default function ExamSubmissions() {
 
     // --- THUẬT TOÁN XUẤT FILE EXCEL (CSV) CHUẨN TIẾNG VIỆT ---
     const handleExportCSV = () => {
+        if (loadedFor !== accessKey || !ownsExam(currentUser?.uid, exam)) return;
         if (submissions.length === 0) return alert("Không có dữ liệu để xuất!");
 
         // 1. Định nghĩa tiêu đề các cột (Header)
@@ -148,7 +145,7 @@ export default function ExamSubmissions() {
         URL.revokeObjectURL(url);
     };
 
-    if (loading) {
+    if (loading || loadedFor !== accessKey) {
         return <div className="text-center mt-10 text-gray-500 font-medium">Đang tải dữ liệu thống kê...</div>;
     }
 

@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function ownsExam(examId) {
+      return signedIn() &&
+        get(/databases/$(database)/documents/exams/$(examId)).data.teacherId == request.auth.uid;
+    }
+
+    match /exams/{examId} {
+      // Authenticated students still need the exam to join and review their work.
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.teacherId == request.auth.uid;
+      allow update: if signedIn() && resource.data.teacherId == request.auth.uid &&
+        request.resource.data.teacherId == resource.data.teacherId;
+      allow delete: if signedIn() && resource.data.teacherId == request.auth.uid;
+    }
+
+    match /submissions/{submissionId} {
+      allow read: if signedIn() &&
+        (resource.data.get('studentId', '') == request.auth.uid || ownsExam(resource.data.examId));
+      allow create: if signedIn() && request.resource.data.studentId == request.auth.uid &&
+        exists(/databases/$(database)/documents/exams/$(request.resource.data.examId));
+      allow update: if signedIn() &&
+        request.resource.data.get('studentId', '') == resource.data.get('studentId', '') &&
+        request.resource.data.examId == resource.data.examId &&
+        (ownsExam(resource.data.examId) ||
+          (resource.data.get('studentId', '') == request.auth.uid &&
+            // Hide history, or retry the identical frozen submission payload.
+            (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletedByStudent']) ||
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['submittedAt']))));
+      allow delete: if ownsExam(resource.data.examId);
+    }
+
+    // Preserve the existing policy for other features. This must never match
+    // exams/submissions: overlapping allow rules are combined with OR.
+    match /{collection}/{document=**} {
+      allow read, write: if signedIn() && collection != 'exams' && collection != 'submissions';
+    }
+  }
+}

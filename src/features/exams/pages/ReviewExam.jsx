@@ -2,10 +2,11 @@ import QuestionExplanation from '../components/QuestionExplanation';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import { withTimeout, timestampMillis } from '@/shared/utils/runtimeSafety';
 import { validateQuestions } from '../utils/examSafety';
+import { ownsExam, canReviewSubmission, accessErrorMessage } from '../utils/examAccess';
 import { useState, useEffect } from "react";
 import { useParams, Link, useLocation, useNavigate } from "react-router-dom";
 import { db } from "@/shared/config/firebase";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDocFromServer } from "firebase/firestore";
 import { AlertTriangle, CheckCircle2, XCircle, PenLine } from "lucide-react";
 import RichTextRenderer from "@/shared/components/RichTextRenderer";
 
@@ -59,7 +60,9 @@ export default function ReviewExam() {
     const [submission, setSubmission] = useState(null);
     const [loading, setLoading] = useState(true);
     const [examInfo, setExamInfo] = useState(null);
-    const fromTeacher = !!currentUser && examInfo?.teacherId === currentUser.uid;
+    const fromTeacher = ownsExam(currentUser?.uid, examInfo);
+    const accessKey = `${currentUser?.uid || ''}/${submissionId}`;
+    const [loadedFor, setLoadedFor] = useState(null);
     const [filter, setFilter] = useState("all"); // all, correct, incorrect
 
     // "Quay lại" returns to the page the user actually came from (browser history), never a
@@ -84,14 +87,15 @@ export default function ReviewExam() {
         const fetchReviewData = async () => {
             setLoading(true); setSubmission(null); setExamInfo(null); setLoadError(''); setIsReviewLocked(true);
             try {
-                const subSnap = await withTimeout(getDoc(doc(db, 'submissions', submissionId)));
+                if (!currentUser?.uid) throw new Error('Vui lòng đăng nhập để xem bài làm.');
+                const subSnap = await withTimeout(getDocFromServer(doc(db, 'submissions', submissionId)));
                 if (!subSnap.exists()) throw new Error('Không tìm thấy bài làm.');
                 const data = subSnap.data();
-                const examSnap = await withTimeout(getDoc(doc(db, 'exams', data.examId)));
+                const examSnap = await withTimeout(getDocFromServer(doc(db, 'exams', data.examId)));
                 if (!examSnap.exists()) throw new Error('Không xác nhận được quyền xem vì đề thi không còn tồn tại.');
                 const info = examSnap.data();
-                const isOwner = info.teacherId === currentUser?.uid;
-                if (!isOwner && data.studentId !== currentUser?.uid) throw new Error('Bạn không có quyền xem bài làm này.');
+                const isOwner = ownsExam(currentUser.uid, info);
+                if (!canReviewSubmission(currentUser.uid, data, info)) throw new Error('Bạn không có quyền xem bài làm này.');
                 const rs = info.reviewSettings || { mode: 'always' };
                 const openTime = timestampMillis(rs.time);
                 const locked = !isOwner && (rs.mode === 'never' || (rs.mode === 'after_time' && (!openTime || Date.now() < openTime)));
@@ -101,15 +105,15 @@ export default function ReviewExam() {
                 setExamInfo(info); setIsReviewLocked(locked); setSubmission(data);
             } catch (error) {
                 console.error('Không tải được bài làm:', error);
-                if (active) setLoadError(error.message || 'Không tải được chi tiết bài làm.');
-            } finally { if (active) setLoading(false); }
+                if (active) setLoadError(accessErrorMessage(error, 'Không tải được chi tiết bài làm.'));
+            } finally { if (active) { setLoadedFor(accessKey); setLoading(false); } }
         };
         fetchReviewData();
         return () => { active = false; };
-    }, [submissionId, currentUser?.uid]);
+    }, [submissionId, currentUser?.uid, accessKey]);
 
 
-    if (loading) return (
+    if (loading || loadedFor !== accessKey) return (
         <div className="min-h-screen bg-[#f8fafc] flex items-center justify-center">
             <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
         </div>

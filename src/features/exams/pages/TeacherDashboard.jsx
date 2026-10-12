@@ -294,19 +294,18 @@ export default function TeacherDashboard() {
             }
 
             const limitExamIds = myExamIds.slice(0, 30);
-            const subQ = query(
-                collection(db, "submissions"),
-                where("examId", "in", limitExamIds)
-            );
-            const subSnap = await getDocs(subQ);
+            // Each query checks one exam owner, within Firestore Rules' access limit.
+            const subSnaps = await mapConcurrent(limitExamIds, examId => getDocs(query(
+                collection(db, "submissions"), where("examId", "==", examId)
+            )));
             const list = [];
-            subSnap.forEach((docSnap) => {
+            subSnaps.forEach(subSnap => subSnap.forEach((docSnap) => {
                 const data = docSnap.data();
                 list.push({
                     id: docSnap.id,
                     ...data,
                 });
-            });
+            }));
 
             list.sort((a, b) => {
                 const aTime = a.submittedAt?.toMillis ? a.submittedAt.toMillis() : new Date(a.submittedAt).getTime();

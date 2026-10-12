@@ -57,13 +57,12 @@ export default function RecalculateScores() {
         return;
       }
 
-      // 2. Get all submissions for those exams (batch by 30 for Firestore 'in' limit)
+      // One exam per query keeps ownership checks within Rules' document-access limit.
       const allSubmissions = [];
-      for (let i = 0; i < examIds.length; i += 30) {
-        const batch = examIds.slice(i, i + 30);
+      for (const examId of examIds) {
         const subQ = query(
           collection(db, "submissions"),
-          where("examId", "in", batch)
+          where("examId", "==", examId)
         );
         const subSnap = await withTimeout(getDocs(subQ));
         subSnap.forEach((d) =>
