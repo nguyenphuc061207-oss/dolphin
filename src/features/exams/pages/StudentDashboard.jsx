@@ -6,6 +6,7 @@ import { useAuth } from "@/features/auth/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
 import { RefreshCw, Trash2, Search, ArrowRight, BookOpen, ClipboardPaste, FileText, LockKeyhole } from "lucide-react";
 import useDocumentTitle from "@/shared/hooks/useDocumentTitle";
+import InProgressExams from '../components/InProgressExams';
 
 export default function StudentDashboard() {
   const { currentUser } = useAuth();
@@ -174,9 +175,12 @@ export default function StudentDashboard() {
 
   if (loading) {
     return (
+      <div className="student-dashboard">
+      <InProgressExams key={currentUser?.uid} userId={currentUser?.uid} submissions={submissions} />
       <div className="flex flex-col items-center justify-center min-h-[400px] text-gray-500">
         <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
         <p className="text-lg font-medium">Đang tải lịch sử học tập...</p>
+      </div>
       </div>
     );
   }
@@ -191,6 +195,7 @@ export default function StudentDashboard() {
         <p>Chào {currentUser?.displayName || 'bạn'}. Vào thi bằng mã đề hoặc xem lại bài đã làm.</p>
       </header>
       {loadError && <div role="alert" className="student-data-alert">{loadError} <button onClick={() => window.location.reload()}>Thử lại</button></div>}
+      <InProgressExams key={currentUser?.uid} userId={currentUser?.uid} submissions={submissions} />
 
       <div className="student-page-grid">
         <aside className="student-join-card" aria-labelledby="join-title">

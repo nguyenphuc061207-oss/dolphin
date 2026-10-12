@@ -30,7 +30,8 @@ import {
 } from "lucide-react";
 
 import { withTimeout, storageOperation } from '@/shared/utils/runtimeSafety';
-import { gradeExam, restoreProgress, validateQuestions } from '../utils/examSafety';
+import { gradeExam, validateQuestions } from '../utils/examSafety';
+import { readExamProgress } from '../utils/examProgress';
 import { normalizeFlow, pageOf, pageStart, pageEnd, describeFlow } from '../utils/examFlow';
 
 // ── Helpers ──────────────────────────────────────────────
@@ -82,6 +83,8 @@ export default function TakeExam() {
   const [storageWarning, setStorageWarning] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submissionAttempted, setSubmissionAttempted] = useState(false);
+  const [savedProgress, setSavedProgress] = useState(null);
+  const [progressError, setProgressError] = useState('');
   const [deadline, setDeadline] = useState(null);
   const [userAnswers, setUserAnswers] = useState({});
   const [timeLeft, setTimeLeft] = useState(0);
@@ -110,6 +113,7 @@ export default function TakeExam() {
   const attemptIdRef = useRef(null);
   const payloadRef = useRef(null);
   const autoSubmittedRef = useRef(false);
+  const saveProgressRef = useRef(null);
 
   const level = securityLevel(exam);
   const fullscreenRequired = level !== 'off';
@@ -142,6 +146,7 @@ export default function TakeExam() {
     let active = true;
     const fetchExam = async () => {
       setLoading(true); setLoadError(''); setExam(null);
+      setSavedProgress(null); setProgressError('');
       setHasStarted(false); setUserAnswers({}); setSubmissionAttempted(false); setSubmitting(false); setPage(0); setMaxPage(0); setShowConfirmNext(false);
       setCheatCount(0); setDeadline(null); setSubmissionCount(0); setStorageWarning('');
       attemptIdRef.current = null; payloadRef.current = null; isSubmittingRef.current = false; autoSubmittedRef.current = false;
@@ -184,7 +189,20 @@ export default function TakeExam() {
           if (currentUser) {
             const subQuery = query(collection(db, "submissions"), where("examId", "==", examId), where("studentId", "==", currentUser.uid));
             const subSnap = await withTimeout(getDocs(subQuery));
-            if (active) setSubmissionCount(subSnap.size);
+            if (active) {
+              setSubmissionCount(subSnap.size);
+              try {
+                const saved = readExamProgress(examId, currentUser.uid, data.duration * 60);
+                if (saved?.attemptId && subSnap.docs.some(sub => sub.id === saved.attemptId)) {
+                  storageOperation('removeItem', `exam_progress_${examId}_${currentUser.uid}`);
+                } else if (saved) {
+                  setSavedProgress(saved);
+                  if (saved.studentName) setStudentManualName(saved.studentName);
+                }
+              } catch {
+                setProgressError('Không đọc được bản lưu bài thi. Hãy thử tải lại hoặc liên hệ giáo viên để tránh mất câu trả lời.');
+              }
+            }
           }
           if (!active) return;
           setExam({ ...data, questions });
@@ -248,12 +266,29 @@ export default function TakeExam() {
   // The absolute deadline avoids per-second serialization of the entire exam.
   useEffect(() => {
     if (!hasStarted || !exam || isSubmittingRef.current) return;
-    const result = storageOperation('setItem', `exam_progress_${examId}_${currentUser?.uid || 'anonymous'}`, JSON.stringify({
+    const snapshot = JSON.stringify({
       userAnswers, deadline, cheatCount, examSnapshot: exam.questions,
       attemptId: attemptIdRef.current, submissionAttempted, page, maxPage,
-    }));
-    if (!result.ok) setStorageWarning('Không thể lưu bài trên thiết bị này. Không tải lại hoặc đóng trang trước khi nộp bài thành công.');
-  }, [userAnswers, deadline, cheatCount, hasStarted, examId, currentUser?.uid, exam, submissionAttempted, page, maxPage]);
+      examId, studentId: currentUser?.uid, examTitle: exam.title, studentName: studentManualName,
+      examFlow: exam.examFlow || null, mathDictionary: exam.mathDictionary || {},
+      flaggedQuestions: [...flaggedQuestions], savedAt: Date.now(),
+    });
+    const save = () => {
+      if (isSubmittingRef.current) return false;
+      const result = storageOperation('setItem', `exam_progress_${examId}_${currentUser?.uid || 'anonymous'}`, snapshot);
+      if (!result.ok) setStorageWarning('Không thể lưu bài trên thiết bị này. Không tải lại hoặc đóng trang trước khi nộp bài thành công.');
+      return result.ok;
+    };
+    saveProgressRef.current = save;
+    save();
+    window.addEventListener('pagehide', save);
+    document.addEventListener('visibilitychange', save);
+    return () => {
+      saveProgressRef.current = null;
+      window.removeEventListener('pagehide', save);
+      document.removeEventListener('visibilitychange', save);
+    };
+  }, [userAnswers, deadline, cheatCount, hasStarted, examId, currentUser?.uid, exam, submissionAttempted, submitting, page, maxPage, studentManualName, flaggedQuestions]);
 
   const handleResume = async () => {
     if (security.inspect() !== 'single') { setSecurityMessage('Hãy ngắt màn hình phụ và kiểm tra lại màn hình trước khi tiếp tục.'); return; }
@@ -385,6 +420,9 @@ export default function TakeExam() {
       const backup = storageOperation('setItem', `exam_progress_${examId}_${currentUser.uid}`, JSON.stringify({
         userAnswers: payloadRef.current.answers, deadline, cheatCount, examSnapshot: payloadRef.current.examSnapshot,
         attemptId: attemptIdRef.current, submissionAttempted: true,
+        examId, studentId: currentUser.uid, examTitle: exam.title, studentName: studentManualName,
+        examFlow: exam.examFlow || null, mathDictionary: exam.mathDictionary || {},
+        page, maxPage, flaggedQuestions: [...flaggedQuestions], savedAt: Date.now(),
       }));
       if (!backup.ok) setStorageWarning('Không thể lưu bản dự phòng. Hãy giữ trang này mở cho đến khi nộp thành công.');
       await withTimeout(setDoc(doc(db, 'submissions', attemptIdRef.current), payloadRef.current), 30000);
@@ -402,7 +440,7 @@ export default function TakeExam() {
       alert('Chưa xác nhận được bài đã lưu. Giữ trang này mở và bấm nộp lại; hệ thống sẽ dùng cùng mã bài làm để tránh nộp trùng.');
     } finally { setSubmitting(false); }
 
-  }, [exam, currentUser, examId, userAnswers, studentManualName, cheatCount, deadline, submissionCount, navigate, level]);
+  }, [exam, currentUser, examId, userAnswers, studentManualName, cheatCount, deadline, submissionCount, navigate, level, page, maxPage, flaggedQuestions]);
 
   // Timer
   useEffect(() => {
@@ -492,6 +530,11 @@ export default function TakeExam() {
             </div>}
           </div>
           <div className="px-6 pb-6">
+            {savedProgress && <div role="status" className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+              <p className="font-bold">Bạn có bài thi đang làm dở</p>
+              <p>Câu trả lời, thứ tự câu hỏi và vị trí đang làm sẽ được khôi phục. Thời gian tiếp tục tính từ lúc bắt đầu, không được đặt lại.</p>
+            </div>}
+            {progressError && <p role="alert" className="mb-4 text-sm text-red-700">{progressError}</p>}
             {isRestricted && (
               <div className={`p-4 rounded-xl border ${isAllowed ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'} mb-4`}>
                 <p className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 mb-1">
@@ -536,7 +579,7 @@ export default function TakeExam() {
             )}
             <button
               onClick={async () => { 
-                if (startInFlightRef.current || limitReached) return;
+                if (startInFlightRef.current || limitReached || progressError) return;
                 if (!studentManualName.trim()) return alert("Vui lòng nhập họ tên trước khi bắt đầu!");
                 
                 if (isRestricted && !isAllowed) {
@@ -556,24 +599,20 @@ export default function TakeExam() {
                 if (screenVerificationRequired && security.inspect() !== 'single') {
                   setSecurityMessage('Hãy kiểm tra màn hình và ngắt màn hình phụ trước khi bắt đầu.'); return;
                 }
-                const progressKey = `exam_progress_${examId}_${currentUser?.uid || 'anonymous'}`;
-                const saved = storageOperation('getItem', progressKey);
                 let parsed = null;
-                if (!saved.ok) setStorageWarning('Không đọc được bản lưu trên thiết bị. Hãy giữ trang mở trong khi làm bài.');
-                if (saved.value) {
-                  try { parsed = restoreProgress(saved.value, exam.duration * 60); }
-                  catch (error) { console.error(error); return alert('Bản lưu bài thi bị lỗi. Vui lòng liên hệ giáo viên để tránh mất câu trả lời.'); }
-                }
+                try { parsed = readExamProgress(examId, currentUser.uid, exam.duration * 60); }
+                catch (error) { console.error(error); return alert('Không đọc được bản lưu bài thi. Vui lòng liên hệ giáo viên để tránh mất câu trả lời.'); }
                 startInFlightRef.current = true; setStarting(true);
                 try {
                   if (fullscreenRequired && !await enterFullScreen()) return;
                   if (screenVerificationRequired && security.inspect() !== 'single') { setSecurityMessage('Cấu hình màn hình vừa thay đổi. Hãy kiểm tra lại.'); return; }
                   if (parsed) {
-                    { const f = normalizeFlow({ ...exam, questions: parsed.examSnapshot }, parsed.examSnapshot.length);
+                    { const f = normalizeFlow({ ...exam, examFlow: Object.hasOwn(parsed, 'examFlow') ? parsed.examFlow : exam.examFlow, questions: parsed.examSnapshot }, parsed.examSnapshot.length);
                       const p = Math.max(0, Math.min(f.totalPages - 1, Number(parsed.page) || 0));
                       setPage(p); setMaxPage(Math.max(p, Math.min(f.totalPages - 1, Number(parsed.maxPage) || 0))); }
                     setUserAnswers(parsed.userAnswers); setTimeLeft(parsed.timeLeft); setDeadline(parsed.deadline); setCheatCount(parsed.cheatCount);
-                    setExam(prev => ({ ...prev, questions: parsed.examSnapshot }));
+                    setExam(prev => ({ ...prev, questions: parsed.examSnapshot, examFlow: Object.hasOwn(parsed, 'examFlow') ? parsed.examFlow : prev.examFlow, mathDictionary: parsed.mathDictionary ?? prev.mathDictionary }));
+                    setFlaggedQuestions(new Set(Array.isArray(parsed.flaggedQuestions) ? parsed.flaggedQuestions : []));
                     attemptIdRef.current = typeof parsed.attemptId === 'string' && /^[a-zA-Z0-9_-]+$/.test(parsed.attemptId) ? parsed.attemptId : doc(collection(db, 'submissions')).id;
                     setSubmissionAttempted(!!parsed.submissionAttempted);
                   } else {
@@ -582,10 +621,10 @@ export default function TakeExam() {
                   setSecurityMessage(''); setHasStarted(true);
                 } finally { startInFlightRef.current = false; setStarting(false); }
               }}
-              disabled={starting || limitReached || (isRestricted && !isAllowed) || (screenVerificationRequired && security.screenState !== 'single')}
+              disabled={starting || !!progressError || limitReached || (isRestricted && !isAllowed) || (screenVerificationRequired && security.screenState !== 'single')}
               className={`w-full py-3.5 ${limitReached || (isRestricted && !isAllowed) || (screenVerificationRequired && security.screenState !== 'single') ? "bg-gray-400 cursor-not-allowed" : "bg-orange-500 hover:bg-orange-600 active:bg-orange-700"} text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2 shadow-md`}
             >
-              {limitReached ? "Đã hết lượt làm bài" : isRestricted && !isAllowed ? "Bị hạn chế truy cập" : (screenVerificationRequired && security.screenState !== 'single') ? security.screenState === 'multiple' ? 'Tắt màn hình phụ để thi' : 'Kiểm tra màn hình trước' : "Bắt đầu thi"} <ArrowRight className="w-5 h-5" />
+              {starting ? 'Đang mở bài thi…' : progressError ? 'Không đọc được bản lưu' : limitReached ? "Đã hết lượt làm bài" : isRestricted && !isAllowed ? "Bị hạn chế truy cập" : (screenVerificationRequired && security.screenState !== 'single') ? security.screenState === 'multiple' ? 'Tắt màn hình phụ để thi' : 'Kiểm tra màn hình trước' : savedProgress ? "Tiếp tục làm bài" : "Bắt đầu thi"} <ArrowRight className="w-5 h-5" />
             </button>
           </div>
         </div>
@@ -1025,13 +1064,18 @@ export default function TakeExam() {
         <div className="fixed inset-0 z-[10000] bg-gray-900/80 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full text-center shadow-xl">
             <h3 className="text-xl font-bold text-gray-900 mb-2">Thoát bài thi?</h3>
-            <p className="text-sm text-gray-500 mb-6">Bài làm của bạn sẽ không được lưu. Bạn có chắc chắn muốn thoát?</p>
+            <p className="text-sm text-gray-500 mb-6">Bài làm được lưu trên trình duyệt này. Bạn có thể mở lại từ mục “Bài thi đang làm dở”. Thời gian vẫn tiếp tục chạy khi thoát.</p>
             <div className="flex gap-3">
               <button onClick={() => setShowConfirmExit(false)} className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition-colors">Hủy</button>
               <button onClick={() => {
+                if (!saveProgressRef.current?.()) {
+                  setShowConfirmExit(false);
+                  return;
+                }
                 isSubmittingRef.current = true;
                 navigate("/student");
-              }} className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-colors">Thoát</button>
+                if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+              }} className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-colors">Lưu và thoát</button>
             </div>
           </div>
         </div>

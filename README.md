@@ -19,6 +19,15 @@ Các biến môi trường: `VITE_GEMINI_API_KEY` cho trợ lý AI và
 
 ## Quyền xem bài nộp
 
+Bài chưa nộp được lưu trên cùng trình duyệt, riêng theo tài khoản và mã đề. Trong
+bảng điều khiển học sinh, mục **Bài thi đang làm dở** mở lại lượt thi với câu trả lời,
+thứ tự câu hỏi, vị trí, câu đánh dấu và hạn giờ đã lưu. **Lưu và thoát** lưu trước khi
+về bảng điều khiển; đóng tab không dừng đồng hồ. Bài hết giờ sẽ nộp câu trả lời đã
+lưu khi mở lại và tiếp tục. Bản lưu không đồng bộ sang thiết bị/trình duyệt khác.
+
+Kiểm thử khôi phục: `node --test tests/exam-progress.test.mjs`. Kiểm thử đóng/mở tab
+trên Edge: `node tests/exam-progress.browser.mjs <đường-dẫn-gói-playwright>`.
+
 `firestore.rules` bảo vệ cả đọc trực tiếp bằng ID và truy vấn danh sách:
 
 - Học sinh chỉ đọc bài có `studentId` bằng UID đăng nhập.
