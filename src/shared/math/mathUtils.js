@@ -1,4 +1,4 @@
-import { convertAsciiMathToLatex } from './asciiMathParser';
+import { convertAsciiMathToLatex, isCodeCallAt, restoreCodeCalls } from './asciiMathParser';
 import { extractMathMLFromText } from './mathmlParser';
 
 // ─── Unicode → LaTeX mapping ───────────────────────────────────────────────
@@ -62,7 +62,7 @@ export function normalizeUnicodeToLatex(text) {
   const mathRegex = /(\$\$[\s\S]*?\$\$|\$[^$\n]*?\$|\\\[[\s\S]*?\\\]|\\\(.*?\\\)|\[IMG:\s*data:[^\]]+\])/g;
 
   // Pre-pass: convert MathML and AsciiMath to LaTeX before splitting
-  let preprocessed = extractMathMLFromText(text);
+  let preprocessed = extractMathMLFromText(restoreCodeCalls(text));
   preprocessed = convertAsciiMathToLatex(preprocessed);
 
   // Normalize \(...\) → $...$ and \[...\] → $$...$$ before splitting
@@ -78,8 +78,10 @@ export function normalizeUnicodeToLatex(text) {
       let result = parts[i];
 
       // 1. sqrt(...) or \sqrt(...) or √(...) -> \sqrt{...}
+      //    A bare sqrt(...) that is a function call in code prose stays as typed.
       if (/(?:\\?sqrt|√)\(([^)]+)\)/i.test(result)) {
-        result = result.replace(/(?:\\?sqrt|√)\(([^)]+)\)/gi, '$\\sqrt{$1}$');
+        result = result.replace(/(?:\\?sqrt|√)\(([^)]+)\)/gi, (match, inner, offset, whole) => (
+          /^sqrt/i.test(match) && isCodeCallAt(whole, offset) ? match : `$\\sqrt{${inner}}$`));
       }
       
       // 1b. √ followed by a number or word (e.g. √123 or √x)

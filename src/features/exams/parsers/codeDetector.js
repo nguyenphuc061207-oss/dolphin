@@ -7,7 +7,9 @@
  * (anything with diacritics or $…$ outside strings/comments) never counts.
  */
 
-const VIETNAMESE = /[À-ÃÈ-ÊÌÍÒ-ÕÙÚÝà-ãè-êìíò-õùúýĂăĐđĨĩŨũƠơƯưẠ-ỹ]/;
+import { looksLikeCodeFragment } from '../../../shared/utils/richText.js';
+
+const VIETNAMESE =/[À-ÃÈ-ÊÌÍÒ-ÕÙÚÝà-ãè-êìíò-õùúýĂăĐđĨĩŨũƠơƯưẠ-ỹ]/;
 
 const CODE_START = new RegExp([
     '#\\s*(include|define|import|pragma)\\b', 'import\\s+[\\w.{*]', 'from\\s+[\\w.]+\\s+import\\b', 'using\\s+(namespace|System)\\b', 'package\\s+\\w',
@@ -47,11 +49,21 @@ export function scoreCodeLine(raw) {
 
     let score = 0;
     if (CODE_START.test(code)) score += 2;
+    // Literal/string/container assignments are stronger evidence than a bare
+    // mathematical equality such as x = 2.
+    if (/^[A-Za-z_]\w*\s*=\s*(?:["'`]|\[|\{)/.test(trimmed)) score += 1;
     if (/[;{]\s*$|^\s*}|\)\s*:\s*$/.test(code)) score += 1;
     if (/(==|!=|\+\+|--(?!\s)|\+=|-=|\*=|\/=|%=|:=|->|=>|::|<<|>>|&&|\|\|)/.test(code)) score += 1;
     else if (/\b[A-Za-z_]\w*(\[[^\]]*\])?\s*=\s*[^=\s]/.test(code)) score += 1; // plain assignment
     const calls = [...code.matchAll(/\b([A-Za-z_]\w+)\s*\(/g)].map((m) => m[1]).filter((n) => !MATH_FUNCS.test(n));
     if (calls.length > 0) score += 1;
+    // A line that is only a call statement: f(), obj.run(x), stack.pop();
+    // (math writes f(x), never f() or a.b(x)). Single-letter names count here too.
+    const stmt = code.match(/^([A-Za-z_][\w.]*)\s*\((.*)\)\s*;?$/);
+    if (stmt) {
+        if (!calls.length && !MATH_FUNCS.test(stmt[1])) score += 1;
+        if (!stmt[2].trim() || stmt[1].includes('.') || /;$/.test(code)) score += 1;
+    } else if (/\b[A-Za-z_]\w*\.[A-Za-z_]\w*\s*\(/.test(code)) score += 1; // method call: math.sqrt(4)
     if (score > 0 && /^(\t| {2,})/.test(line)) score += 1; // indented body line
     return { score, neutral: false };
 }
@@ -77,6 +89,13 @@ export function detectCodeLines(plains, skip = () => false, known = () => false)
             if (!weak) continue;
             if (isCode[i - 1] || isCode[i + 1]) { isCode[i] = true; changed = true; }
         }
+    }
+    // bridge: up to 3 short statement lines sandwiched between code belong to the listing
+    for (let i = 0; i < plains.length; i++) {
+        if (isCode[i] || !isCode[i - 1]) continue;
+        let j = i;
+        while (j < plains.length && j - i < 3 && !isCode[j] && !scores[j].skip && looksLikeCodeFragment(plains[j])) j++;
+        if (j > i && isCode[j]) for (let k = i; k < j; k++) isCode[k] = true;
     }
     return isCode;
 }

@@ -15,9 +15,21 @@ export function escapeHtml(text) {
         .replace(/>/g, '&gt;');
 }
 
+/** Decode one layer of text entities without interpreting angle brackets as tags. */
+export function decodeTextEntities(text) {
+    const named = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00A0' };
+    return String(text ?? '').replace(/&(amp|lt|gt|quot|apos|nbsp|#\d+|#x[\da-f]+);/gi, (entity, name) => {
+        if (name[0] !== '#') return named[name.toLowerCase()];
+        const hex = name[1].toLowerCase() === 'x';
+        const point = parseInt(name.slice(hex ? 2 : 1), hex ? 16 : 10);
+        return point > 0 && point <= 0x10FFFF && !(point >= 0xD800 && point <= 0xDFFF) ? String.fromCodePoint(point) : entity;
+    });
+}
+
 /** True when the string contains tags from our whitelist (i.e. it was produced by the rich pipeline). */
 export function isRichHtml(str) {
-    return typeof str === 'string' && /<\/?(?:b|strong|i|em|u|s|sub|sup|mark|code|pre|br|p|div|span)\b[^>]*>/i.test(str);
+    return typeof str === 'string' && (/<\/?(?:b|strong|i|em|u|s|sub|sup|mark|code|pre|br|p|div|span)\b[^>]*>/i.test(str)
+        || /&(?:amp|lt|gt|quot|apos|nbsp|#\d+|#x[\da-f]+);/i.test(str));
 }
 
 /** Legacy plain text → rich HTML (escape + newline → <br>). */
@@ -81,7 +93,28 @@ export function sanitizeRichHtml(html) {
  * Join them into a single block so code reads as one continuous listing (one box, real newlines).
  */
 export function mergeCodeBlocks(html) {
-    return html.replace(/<\/code>(?:<br\s*\/?>)?<code class="rt-block">/g, '\n');
+    // Repair listings saved with short statements left outside the box (`f()` between two
+    // blocks): up to 3 plain lines between two code blocks join them when they read as code.
+    html = html.replace(/(<\/code>)((?:<br\s*\/?>[^<]*){1,3})<br\s*\/?>(?=<code class="rt-block">)/g, (gap, close, between, offset, whole) => {
+        if (whole.lastIndexOf('<code class="rt-block">', offset) <= whole.lastIndexOf('<code>', offset)) return gap; // closes an inline <code>
+        const lines = between.split(/<br\s*\/?>/).slice(1);
+        if (!lines.every((l) => looksLikeCodeFragment(decodeTextEntities(l)))) return gap;
+        return close + lines.map((l) => `<br><code class="rt-block">${l}</code>`).join('') + '<br>';
+    });
+    // Only join block code. An inline <code> immediately before a block stays inline.
+    return html.replace(/<code class="rt-block">[\s\S]*?<\/code>(?:(?:<br\s*\/?>)?<code class="rt-block">[\s\S]*?<\/code>)+/g,
+        (block) => block.replace(/<\/code>(?:<br\s*\/?>)?<code class="rt-block">/g, '\n'));
+}
+
+/**
+ * A short ASCII statement with code punctuation and no prose: `f()`, `x += 1`, `}`, `a[i] = b;`.
+ * Only meaningful for a line already sitting between code lines.
+ */
+export function looksLikeCodeFragment(line) {
+    const t = String(line ?? '').replace(/\u00A0/g, ' ').trim();
+    return t.length > 0 && t.length <= 120 && /^[\x20-\x7E\t]+$/.test(t) && /[()[\]{}=;]/.test(t)
+        && !/[.?!]$/.test(t) && !/\$[^$]+\$/.test(t)
+        && !/[A-Za-z]{2,}\s+[A-Za-z]{2,}\s+[A-Za-z]{2,}\s+[A-Za-z]{2,}/.test(t); // 4+ words = a sentence
 }
 
 /** Strip tags & decode entities. Used only for structure detection and previews – never for storage. */

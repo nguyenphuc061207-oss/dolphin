@@ -660,22 +660,46 @@ function amToLatex(expr) {
 
 // ─── Main API ───────────────────────────────────────────────────────────────
 
+// Prose about programming ("dùng được sqrt(4) mà không cần ghi math."): there sqrt(4)
+// is a function call, not a radical.
+const PROGRAMMING_HINT = /\b(?:math|cmath|numpy|np|random|Math)\.|\b(?:import|print|def|return|lambda|python|module)\b|\b[A-Za-z_]\w*\.[A-Za-z_]\w*\s*\(|thư viện|lập trình|câu lệnh|đoạn (?:mã|code)|\bcode\b/i;
+
+/** True when the call at `offset` is code: `math.sqrt(4)`, or its line talks about programming. */
+export function isCodeCallAt(text, offset) {
+    if (offset > 0 && /[\w.]/.test(text[offset - 1])) return true;
+    const start = text.lastIndexOf('\n', offset - 1) + 1;
+    const end = text.indexOf('\n', offset);
+    return PROGRAMMING_HINT.test(text.slice(start, end === -1 ? undefined : end));
+}
+
+/**
+ * Undo the old import conversion for questions saved before code calls were protected:
+ * `$\sqrt{4}$` on a programming line (or `math.$\sqrt{4}$`) goes back to `sqrt(4)`.
+ */
+export function restoreCodeCalls(text) {
+    if (!text || !text.includes('\\sqrt{')) return text;
+    return text.replace(/\$\\sqrt\{([^{}$\\\n]+)\}\$/g, (match, inner, offset, whole) => (
+        isCodeCallAt(whole, offset) ? `sqrt(${inner})` : match));
+}
+
 export function convertAsciiMathToLatex(text) {
     if (!text) return text;
 
-    let result = text.replace(/`([^`\n]+)`/g, (match, content) => {
+    let result = text.replace(/`([^`\n]+)`/g, (match, content, offset, whole) => {
         // Nếu chứa dấu gạch chéo ngược '\', đây rất có thể là LaTeX nguyên bản, bọc trong $...$
         if (content.includes('\\')) {
             return `$${content}$`;
         }
-        if (looksLikeAsciiMath(content)) {
+        // `sqrt(4)` in a programming question is inline code, not math
+        if (looksLikeAsciiMath(content) && !isCodeCallAt(whole, offset)) {
             const latex = amToLatex(content);
             return `$${latex}$`;
         }
         return match;
     });
 
-    result = result.replace(/(?<!\$)\bsqrt\(([^)]+)\)(?!\$)/g, (match, inner) => {
+    result = result.replace(/(?<!\$)\bsqrt\(([^)]+)\)(?!\$)/g, (match, inner, offset, whole) => {
+        if (isCodeCallAt(whole, offset)) return match;
         return `$\\sqrt{${amToLatex(inner)}}$`;
     });
 

@@ -30,7 +30,7 @@
 import { normalizeUnicodeToLatex } from '@/shared/math/mathUtils';
 import { convertAsciiMathToLatex } from '@/shared/math/asciiMathParser';
 import { extractMathMLFromText } from '@/shared/math/mathmlParser';
-import { escapeHtml, sanitizeRichHtml, normalizeExplanation } from '@/shared/utils/richText';
+import { escapeHtml, sanitizeRichHtml, normalizeExplanation, decodeTextEntities } from '@/shared/utils/richText';
 import { detectCodeLines, looksLikeCode } from './codeDetector';
 
 // ─────────────────────────────────────────────
@@ -511,8 +511,7 @@ export function parseQuestionsFromText(text) {
 // runs on the plain text of a line, while the stored content/options are the
 // line's HTML with the "Câu 1." / "A." marker cut off.
 
-const ENTITY_MAP = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
-const decodeEntities = (s) => (s.includes('&') ? s.replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, e) => ENTITY_MAP[e]) : s);
+const decodeEntities = decodeTextEntities;
 
 const tokenizeHtml = (html) => html.match(/<[^>]*>|[^<]+/g) || [];
 
@@ -539,13 +538,18 @@ function splitIntoLines(html) {
     let cur = '';
     const flush = (reopen) => {
         const text = cur + closersOf(stack);
-        if (/\[IMG:/.test(text) || linePlain(text).trim() !== '') lines.push(text);
+        if (/\[IMG:/.test(text) || linePlain(text).trim() !== '' || stack.some((t) => t.name === 'code' || t.name === 'pre')) lines.push(text);
         cur = reopen ? openersOf(stack) : '';
         if (!reopen) stack.length = 0;
     };
     for (const tok of tokenizeHtml(html)) {
         const info = tok[0] === '<' ? tagInfo(tok) : null;
-        if (!info) { cur += tok; continue; }
+        if (!info) {
+            // Newlines inside explicit code are meaningful; surrounding HTML
+            // source whitespace is not a line in the imported document.
+            cur += tok;
+            continue;
+        }
         if (info.name === 'p' || info.name === 'div') { flush(false); continue; }
         if (info.name === 'br') { flush(true); continue; }
         if (info.closing) {
@@ -594,8 +598,8 @@ function splitHtmlAt(html, n) {
     return [head + closersOf(stack), openersOf(stack) + carry + toks.slice(i).join('')];
 }
 
-/** Apply fn to every text node of the HTML that is not inside <code>/<pre>. */
-function mapTextOutsideCode(html, fn) {
+/** Apply fn to every text node of the HTML that is not inside <code>/<pre>. fn returns text, or HTML when `fnReturnsHtml`. */
+function mapTextOutsideCode(html, fn, fnReturnsHtml = false) {
     let codeDepth = 0;
     return tokenizeHtml(html).map((tok) => {
         if (tok[0] === '<') {
@@ -604,7 +608,8 @@ function mapTextOutsideCode(html, fn) {
             return tok;
         }
         if (codeDepth > 0) return tok;
-        return escapeHtml(fn(decodeEntities(tok)));
+        const out = fn(decodeEntities(tok));
+        return fnReturnsHtml ? out : escapeHtml(out);
     }).join('');
 }
 
@@ -673,6 +678,10 @@ export function parseQuestionsFromHtml(html) {
         lines.push({ html: lineHtml, plain });
     };
     for (const rawHtml of splitIntoLines(html)) {
+        if (/<pre\b/.test(rawHtml)) {
+            lines.push({ html: rawHtml, plain: linePlain(rawHtml) });
+            continue;
+        }
         let lineHtml = rawHtml;
         let plain = linePlain(rawHtml);
         let tail = null;
@@ -704,7 +713,7 @@ export function parseQuestionsFromHtml(html) {
 
     // 2b. Auto-detect source code in lines the file gave no hint for (TXT, pasted text,
     //     Word in a normal font). Question / option / answer lines are never code.
-    const hasBlockCode = (h) => /<code class="rt-block"/.test(h);
+    const hasBlockCode = (h) => /<code class="rt-block"|<pre\b/.test(h);
     const codeFlags = detectCodeLines(
         lines.map((l) => l.plain),
         (i) => {
@@ -734,8 +743,19 @@ export function parseQuestionsFromHtml(html) {
         const trimmed = plain.replace(/^[\s\uFEFF]+/, '');
         const lead = plain.length - trimmed.length;
 
-        let qStart = parseQuestionStart(plain);
-        if (qStart && inExplanation && cur && !/^\s*(câu|question|q\.?)\s*\d/i.test(trimmed) && qStart.num !== cur.num + 1) qStart = null;
+        const named = QUESTION_NAMED_REGEX.test(trimmed);
+        let qStart = /<pre\b/.test(line.html) ? null : parseQuestionStart(plain);
+        if (qStart && inExplanation && cur && !named && qStart.num !== cur.num + 1) qStart = null;
+        // "1) s1 in s.  2) s2 in s." under a stem that has no options/answer yet is a list
+        // of statements inside the question, not a new question: in a "Câu N." document,
+        // or when the number does not continue the numbering.
+        if (qStart && cur && !named && cur.options.length === 0 && cur.correctAnswer === -1
+            && (cur.named || qStart.num !== cur.num + 1)) qStart = null;
+        // Explicit code can contain "A. ...", "Answer: ..." or numbered lines.
+        // These are source text, never exam structure.
+        const explicitCode = /<pre\b/.test(line.html) || (hasBlockCode(line.html)
+            && !qStart && !parseOptionLine(plain) && parseAnswerLine(plain) === -1);
+        if (explicitCode) qStart = null;
         if (qStart) {
             if (cur) blocks.push(cur);
             // content text is a suffix of the trimmed line
@@ -744,6 +764,7 @@ export function parseQuestionsFromHtml(html) {
             const consumed = rawTail === qStart.content ? clean.length - qStart.content.length : 0;
             cur = {
                 num: qStart.num,
+                named,
                 content: cutMarker(line, consumed),
                 options: [],
                 correctAnswer: -1,
@@ -756,6 +777,13 @@ export function parseQuestionsFromHtml(html) {
             continue;
         }
         if (!cur) continue;
+
+        if (explicitCode) {
+            if (inExplanation || afterAnswer) cur.explanation += (cur.explanation ? '<br>' : '') + line.html;
+            else if (lastOptionIndex >= 0) cur.options[lastOptionIndex] += '<br>' + line.html;
+            else cur.content += '<br>' + line.html;
+            continue;
+        }
 
         const label = trimmed.match(EXPLANATION_LABEL);
         if (label) {
@@ -830,6 +858,14 @@ function normalizeKeepingImages(text) {
     return text.split(/(\[IMG:[^\]]*\])/g).map((p, i) => (i % 2 ? p : normalizeMathNotations(p))).join('');
 }
 
+/** sqrt(4), math.sqrt(x) in prose → <code>…</code>, so neither import nor rendering turns them into √. */
+function markCodeCalls(html) {
+    return mapTextOutsideCode(html, (text) => text
+        .split(/((?<![\w.])(?:[A-Za-z_]\w*\.)*sqrt\([^()\n]*\))/)
+        .map((part, i) => (i % 2 ? `<code>${escapeHtml(part)}</code>` : escapeHtml(part)))
+        .join(''), true);
+}
+
 function finalizeRichBlock(block) {
     const plainOf = (h) => linePlain(String(h ?? '').replace(/<br\s*\/?>/gi, ' '));
     const shadow = {
@@ -838,13 +874,14 @@ function finalizeRichBlock(block) {
         options: block.options.map((o) => (o === undefined ? undefined : plainOf(o))),
     };
     const base = finalizeBlock(shadow); // type, correctAnswer, option trimming
-    const toMath = (h) => sanitizeRichHtml(mapTextOutsideCode(
-        String(h ?? ''),
+    // A question with code is about programming: sqrt(4) in its prose is a call, kept as inline code.
+    const codeContext = [block.content, block.explanation, ...block.options].some((h) => /<code\b|<pre\b/.test(h || ''));
+    const prepare = (h) => mapTextOutsideCode(
+        codeContext ? markCodeCalls(String(h ?? '')) : String(h ?? ''),
         normalizeKeepingImages,
-    ));
-    const content = sanitizeRichHtml(
-        removeTypeTag(mapTextOutsideCode(block.content, normalizeKeepingImages)),
     );
+    const toMath = (h) => sanitizeRichHtml(prepare(h));
+    const content = sanitizeRichHtml(removeTypeTag(prepare(block.content)));
     const out = {
         num: base.num,
         type: base.type,

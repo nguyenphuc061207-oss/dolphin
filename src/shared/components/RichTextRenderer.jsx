@@ -44,6 +44,12 @@ function renderCode(text, key) {
     : t.text));
 }
 
+function codeText(node) {
+  if (node.nodeType === 3) return node.nodeValue;
+  if (node.nodeType === 1 && node.tagName.toLowerCase() === 'br') return '\n';
+  return Array.from(node.childNodes).map(codeText).join('');
+}
+
 /** Convert a sanitized DOM tree to React elements. Math is rendered in text nodes except inside code. */
 function domToReact(node, mathDict, inCode, key) {
   if (node.nodeType === 3) {
@@ -55,6 +61,11 @@ function domToReact(node, mathDict, inCode, key) {
   const tag = node.tagName.toLowerCase();
   if (tag === 'br') return <br key={key} />;
   const isBlockCode = (tag === 'code' && node.getAttribute('class') === 'rt-block') || tag === 'pre';
+  if (isBlockCode) {
+    // Tokenize the whole listing, including Word runs, so strings/comments spanning
+    // multiple text nodes retain their context. Code never enters the math renderer.
+    return React.createElement(TAG_COMPONENTS[tag], { key, className: node.getAttribute('class') || undefined }, renderCode(codeText(node), key));
+  }
   const nextInCode = isBlockCode ? 'block' : (inCode || tag === 'code');
   const children = Array.from(node.childNodes).map((c, i) => domToReact(c, mathDict, nextInCode, `${key}.${i}`));
   const Comp = TAG_COMPONENTS[tag];

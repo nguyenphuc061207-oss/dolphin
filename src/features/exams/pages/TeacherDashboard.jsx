@@ -1108,7 +1108,7 @@ return (
                                             </div>
                                         )}
 
-                                        <details defaultOpen={!!normalizeExplanation(manualExplanation)} className="text-xs">
+                                        <details className="text-xs">
                                             <summary className="cursor-pointer text-gray-500 font-bold select-none">Giải thích (không bắt buộc)</summary>
                                             <div className="mt-2">
                                                 <p className="text-gray-500 mb-2">Chỉ hiển thị khi có nội dung và học sinh được phép xem lại bài.</p>

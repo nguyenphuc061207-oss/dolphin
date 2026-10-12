@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Plus, Trash2, ChevronUp, ChevronDown, Check } from 'lucide-react';
 import RichTextEditor from '@/shared/components/RichTextEditor';
 import { htmlToPlain, normalizeExplanation } from '@/shared/utils/richText';
@@ -65,6 +66,8 @@ export default function QuestionEditorCard({ question, onChange, onDone, onDelet
     const type = q.type || 'single';
     const options = q.options || [];
     const set = (patch) => onChange({ ...q, ...patch });
+    // Open the explanation when the question already has one (details has no defaultOpen in React)
+    const [explanationOpen, setExplanationOpen] = useState(() => !!normalizeExplanation(q.explanation));
 
     const setOption = (i, v) => set({ options: options.map((o, k) => (k === i ? v : o)) });
 
@@ -178,7 +181,7 @@ export default function QuestionEditorCard({ question, onChange, onDone, onDelet
                 </div>
             )}
 
-            <details defaultOpen={!!normalizeExplanation(q.explanation)} className="text-xs">
+            <details open={explanationOpen} onToggle={(e) => setExplanationOpen(e.currentTarget.open)} className="text-xs">
                 <summary className="cursor-pointer text-gray-500 font-bold select-none">Giải thích (không bắt buộc)</summary>
                 <div className="mt-2">
                     <p className="text-gray-500 mb-2">Chỉ hiển thị khi có nội dung và học sinh được phép xem lại bài.</p>

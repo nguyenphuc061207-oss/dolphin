@@ -25,9 +25,10 @@ function MathText({ text, className = '' }) {
 
   if (!text) return null;
 
-  // No math / image tokens → plain text (fast path)
+  // No math / image tokens → plain text (fast path). Normalised text, not the raw input:
+  // normalisation can also remove math (a saved $\sqrt{4}$ that is really sqrt(4) in code).
   if (!tokens.some((t) => t.type !== 'text')) {
-    return <span className={className}>{text}</span>;
+    return <span className={className}>{tokens.map((t) => t.content).join('')}</span>;
   }
 
   return (

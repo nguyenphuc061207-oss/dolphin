@@ -1199,6 +1199,7 @@ input:not([type=checkbox]):not([type=radio]), select, textarea { border-radius: 
 /* ── Code listing: one continuous block, quiet chrome, light syntax colour ── */
 .rich-text-content code.rt-block, .rich-text-content pre, .rt-editor pre {
   display: block; margin: 8px 0; padding: 12px 16px; border-radius: 12px; border: 0;
+  max-width: 100%; min-width: 0; box-sizing: border-box; overflow-wrap: normal; word-break: normal;
   background: #1c1c1e; color: #f2f2f7; white-space: pre; overflow-x: auto; tab-size: 4;
   font-size: .875em; line-height: 1.65; font-variant-ligatures: none;
   font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;

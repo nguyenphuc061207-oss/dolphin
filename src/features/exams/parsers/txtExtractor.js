@@ -22,11 +22,24 @@ function decodeText(buffer) {
 
 /** Plain text (pasted or decoded) → one escaped <p> per line. */
 export function plainTextToHtml(text) {
-    return String(text ?? '')
-        .replace(/\r\n?/g, '\n')
-        .split('\n')
-        .map((line) => `<p>${escapeHtml(line)}</p>`)
-        .join('\n');
+    const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
+    const out = [];
+    let fence = null;
+    let code = [];
+    const flush = () => { out.push(`<pre>${escapeHtml(code.join('\n'))}</pre>`); code = []; };
+    for (const line of lines) {
+        const marker = line.match(/^\s*(`{3,}|~{3,})([^`]*)$/);
+        if (fence) {
+            if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) {
+                flush();
+                fence = null;
+            } else code.push(line);
+        } else if (marker) {
+            fence = marker[1];
+        } else out.push(`<p>${escapeHtml(line)}</p>`);
+    }
+    if (fence) flush();
+    return out.join('\n');
 }
 
 export function extractTxtToHtml(arrayBuffer) {
