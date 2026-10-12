@@ -120,6 +120,16 @@ const ACCENT_MAP = {
 
 // ─── Core converter: MathML DOM → LaTeX ─────────────────────────────────────
 
+// LaTeX special characters that arrive as plain MathML text (50%, a&b …)
+// `$` becomes \textdollar: the $…$ delimiters would otherwise split even an escaped \$.
+const escapeMath = (s) => s.replace(/[%&#_{}]/g, '\\$&').replace(/\$/g, '\\text{\\textdollar}').replace(/~/g, '\\sim ');
+const escapeText = (s) => s.replace(/\\/g, '\\textbackslash{}').replace(/[%&#_{}]/g, '\\$&').replace(/\$/g, '\\textdollar{}')
+    .replace(/\^/g, '\\textasciicircum{}').replace(/~/g, '\\textasciitilde{}');
+
+/** Concatenate LaTeX pieces so that \alpha + x stays "\alpha x", never the unknown "\alphax". */
+const joinLatex = (parts) => parts.reduce((out, p) => (
+    /\\[A-Za-z]+$/.test(out) && /^[A-Za-z]/.test(p) ? `${out} ${p}` : out + p), '');
+
 function nodeToLatex(node) {
     if (!node) return '';
 
@@ -135,14 +145,29 @@ function nodeToLatex(node) {
         n.nodeType === 1 || (n.nodeType === 3 && n.textContent.trim())
     );
 
-    const childLatex = () => children.map(nodeToLatex).join('');
+    const childLatex = () => joinLatex(children.map(nodeToLatex));
     const childAt = (idx) => children[idx] ? nodeToLatex(children[idx]) : '';
 
     switch (tag) {
         case 'math':
             return childLatex();
 
-        case 'mrow':
+        case 'mrow': {
+            // MathType writes a system as <mo>{</mo><mtable>…</mtable>: stretch the brace to the table
+            const first = children[0];
+            const firstTag = first?.localName || first?.nodeName?.replace(/^.*:/, '');
+            const hasTable = children.some(c => (c.localName || c.nodeName?.replace(/^.*:/, '')) === 'mtable');
+            const OPEN = { '{': '\\{', '(': '(', '[': '[', '|': '|', '‖': '\\|', '⟨': '\\langle' };
+            const CLOSE = { '}': '\\}', ')': ')', ']': ']', '|': '|', '‖': '\\|', '⟩': '\\rangle' };
+            if (hasTable && firstTag === 'mo' && OPEN[first.textContent.trim()]) {
+                const last = children[children.length - 1];
+                const lastTag = last?.localName || last?.nodeName?.replace(/^.*:/, '');
+                const closeChar = lastTag === 'mo' && children.length > 1 ? CLOSE[last.textContent.trim()] : undefined;
+                const inner = joinLatex(children.slice(1, closeChar ? -1 : undefined).map(nodeToLatex));
+                return `\\left${OPEN[first.textContent.trim()]}${inner}\\right${closeChar ?? '.'}`;
+            }
+            return childLatex();
+        }
         case 'mstyle':
         case 'merror':
         case 'mpadded':
@@ -168,21 +193,21 @@ function nodeToLatex(node) {
                 return `\\mathrm{${text}}`;
             }
 
-            return text;
+            return escapeMath(text);
         }
 
         case 'mn':
-            return node.textContent.trim();
+            return escapeMath(node.textContent.trim());
 
         case 'mo': {
             const text = node.textContent.trim();
-            return MO_MAP[text] ?? text;
+            return MO_MAP[text] ?? escapeMath(text);
         }
 
         case 'mtext': {
             const text = node.textContent;
             if (!text.trim()) return text.includes(' ') ? '\\,' : '';
-            return `\\text{${text}}`;
+            return `\\text{${escapeText(text)}}`;
         }
 
         case 'mspace': {
@@ -333,8 +358,9 @@ function nodeToLatex(node) {
         }
 
         case 'mfenced': {
-            let open = node.getAttribute('open') || '(';
-            let close = node.getAttribute('close') || ')';
+            // A missing attribute defaults to ( ); an empty one means no bracket
+            const open = node.hasAttribute('open') ? node.getAttribute('open') : '(';
+            const close = node.hasAttribute('close') ? node.getAttribute('close') : ')';
             const separators = node.getAttribute('separators') || ',';
 
             const delimMap = {
@@ -344,8 +370,9 @@ function nodeToLatex(node) {
                 '⌈': '\\lceil', '⌉': '\\rceil',
                 '⌊': '\\lfloor', '⌋': '\\rfloor',
             };
-            const lOpen = delimMap[open] || open;
-            const lClose = delimMap[close] || close;
+            // open="" / close="" mean no bracket on that side (\left. / \right.)
+            const lOpen = delimMap[open] || open || '.';
+            const lClose = delimMap[close] || close || '.';
 
             const sep = separators.trim()[0] || ',';
             const parts = children.map(nodeToLatex);
@@ -354,18 +381,9 @@ function nodeToLatex(node) {
         }
 
         case 'mtable': {
-            const parent = node.parentNode;
-            const parentTag = parent ? (parent.localName || parent.nodeName.replace(/^.*:/, '')) : '';
-            let env = 'matrix';
-
-            if (parentTag === 'mfenced') {
-                const open = parent.getAttribute('open') || '(';
-                const envMap = {
-                    '(': 'pmatrix', '[': 'bmatrix', '{': 'Bmatrix',
-                    '|': 'vmatrix', '‖': 'Vmatrix',
-                };
-                env = envMap[open] || 'pmatrix';
-            }
+            // The brackets come from the surrounding mfenced / <mo>, which already emits \left…\right:
+            // a bracketed environment here would draw them twice. Left-aligned tables are systems.
+            const leftAligned = /left/.test(node.getAttribute('columnalign') || '');
 
             const rows = children.filter(c => {
                 const t = c.localName || c.nodeName.replace(/^.*:/, '');
@@ -380,7 +398,10 @@ function nodeToLatex(node) {
                 return cells.map(nodeToLatex).join(' & ');
             });
 
-            return `\\begin{${env}}${latexRows.join(' \\\\ ')}\\end{${env}}`;
+            const body = latexRows.join(' \\\\ ');
+            if (!leftAligned) return `\\begin{matrix}${body}\\end{matrix}`;
+            const cols = Math.max(1, ...latexRows.map(r => r.split(' & ').length));
+            return `\\begin{array}{${'l'.repeat(cols)}}${body}\\end{array}`;
         }
 
         case 'mtr':

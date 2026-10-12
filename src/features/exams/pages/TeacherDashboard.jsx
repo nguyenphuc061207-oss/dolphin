@@ -158,6 +158,7 @@ export default function TeacherDashboard() {
     const [importText, setImportText] = useState("");
     const [isFileProcessing, setIsFileProcessing] = useState(false);
     const [fileError, setFileError] = useState('');
+    const [fileWarning, setFileWarning] = useState('');
     const [fileName, setFileName] = useState('');
     const [previewQuestions, setPreviewQuestions] = useState([]);
     const [editingPreviewIdx, setEditingPreviewIdx] = useState(null);
@@ -600,6 +601,7 @@ export default function TeacherDashboard() {
         if (!file) return;
         const requestId = ++fileRequestRef.current;
         setFileError('');
+        setFileWarning('');
         setFileName(file.name);
         setIsFileProcessing(true);
         setPreviewQuestions([]);
@@ -610,9 +612,11 @@ export default function TeacherDashboard() {
             const ext = file.name.split('.').pop().toLowerCase();
             const arrayBuffer = await file.arrayBuffer();
             let html;
+            let undisplayable = null;
             if (ext === 'docx') {
-                const { extractDocxToHtml } = await import("../parsers/docxExtractor");
+                const { extractDocxToHtml, UNDISPLAYABLE_IMAGE } = await import("../parsers/docxExtractor");
                 html = await extractDocxToHtml(arrayBuffer);
+                undisplayable = UNDISPLAYABLE_IMAGE;
             } else if (ext === 'txt') {
                 html = extractTxtToHtml(arrayBuffer);
             } else if (ext === 'pdf') {
@@ -630,7 +634,16 @@ export default function TeacherDashboard() {
             if (parsed.length === 0) {
                 throw new Error(`Không tìm thấy câu hỏi nào trong file ${ext.toUpperCase()}.`);
             }
-            if (requestId === fileRequestRef.current) setPreviewQuestions(parsed);
+            // MathType / Equation 3.0 formulas arrive as WMF/EMF pictures that no browser can show
+            const broken = undisplayable
+                ? parsed.filter((q) => [q.content, q.explanation, ...(q.options || [])].some((v) => undisplayable.test(v || ''))).map((q) => q.num)
+                : [];
+            if (requestId === fileRequestRef.current) {
+                setPreviewQuestions(parsed);
+                setFileWarning(broken.length
+                    ? `Câu ${broken.join(', ')} có công thức MathType hoặc Equation 3.0 được lưu dạng ảnh WMF/EMF. Trình duyệt không hiển thị được loại ảnh này. Hãy gõ lại các công thức đó bằng Insert → Equation của Word (hoặc dạng LaTeX $...$) rồi nhập lại file.`
+                    : '');
+            }
         } catch (err) {
             console.error('File processing error:', err);
             if (requestId === fileRequestRef.current) setFileError(err.message || 'Lỗi khi xử lý file.');
@@ -653,6 +666,7 @@ const handleConfirmPreview = () => {
     setPreviewQuestions([]);
     setImportText('');
     setFileName('');
+    setFileWarning('');
     setQuestionTab('manual');
 };
 
@@ -708,7 +722,7 @@ const moveQuestion = (from, to) => {
 
         const data = await response.json();
         if (!data.data?.url || typeof data.data.url !== 'string') throw new Error('Máy chủ ảnh không trả về đường dẫn hợp lệ.');
-        return data.data.url;
+        return { url: data.data.url, deleteUrl: typeof data.data.delete_url === 'string' ? data.data.delete_url : null };
     };
 
     // Scan all questions and options for base64 images, upload them in parallel, and replace them with URL
@@ -742,10 +756,13 @@ const moveQuestion = (from, to) => {
         }
         
         const base64List = Array.from(base64Set);
-        if (base64List.length === 0) return updatedQs; // Không có ảnh nào để tải lên
+        if (base64List.length === 0) return { questions: updatedQs, imageDeleteUrls: [] }; // Không có ảnh nào để tải lên
         
         // Bước 2: Tải lên tất cả các ảnh đồng thời (song song)
-        const urls = await mapConcurrent(base64List, uploadBase64ImageToImgBB, 3);
+        const uploaded = await mapConcurrent(base64List, uploadBase64ImageToImgBB, 3);
+        const urls = uploaded.map(u => u.url);
+        // ImgBB không có API xóa ảnh; lưu delete_url để xóa thủ công khi cần
+        const imageDeleteUrls = uploaded.filter(u => u.deleteUrl).map(u => ({ url: u.url, deleteUrl: u.deleteUrl }));
         
         // Bước 3: Tạo bản đồ ánh xạ từ base64 -> URL đã upload
         const base64ToUrlMap = new Map();
@@ -773,7 +790,7 @@ const moveQuestion = (from, to) => {
             }
         }
         
-        return updatedQs;
+        return { questions: updatedQs, imageDeleteUrls };
     };
 
 const handleSaveExam = async () => {
@@ -788,7 +805,7 @@ const handleSaveExam = async () => {
     setIsSubmitting(true);
     try {
         validateQuestions(questions);
-        const finalQuestions = await uploadAllImagesInQuestions(questions.map(normalizeQuestionExplanation));
+        const { questions: finalQuestions, imageDeleteUrls } = await uploadAllImagesInQuestions(questions.map(normalizeQuestionExplanation));
 
         await addDoc(collection(db, "exams"), {
             teacherId: currentUser.uid,
@@ -796,6 +813,7 @@ const handleSaveExam = async () => {
             title: examTitle,
             duration: Number(duration),
             questions: finalQuestions,
+            imageDeleteUrls,
             startDate: startDate || null,
             endDate: endDate || null,
             securityLevel: examSecurityLevel,
@@ -1178,6 +1196,14 @@ return (
                                                     <p className="text-[10px] text-emerald-600 font-medium uppercase">Đã xử lý thành công</p>
                                                 </div>
                                                 <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+                                            </div>
+                                        )}
+
+                                        {fileWarning && !fileError && (
+                                            <div role="alert" className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                                                <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                                                <p className="text-sm font-medium text-amber-800 flex-1">{fileWarning}</p>
+                                                <button onClick={() => setFileWarning('')} aria-label="Đóng cảnh báo" className="p-1 hover:bg-amber-100 rounded-lg transition"><X className="w-4 h-4 text-amber-500" /></button>
                                             </div>
                                         )}
 

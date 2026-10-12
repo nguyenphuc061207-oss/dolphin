@@ -8,6 +8,7 @@
  */
 
 import { looksLikeCodeFragment } from '../../../shared/utils/richText.js';
+import { isPythonLike } from '../../../shared/utils/highlightCode.js';
 
 const VIETNAMESE =/[À-ÃÈ-ÊÌÍÒ-ÕÙÚÝà-ãè-êìíò-õùúýĂăĐđĨĩŨũƠơƯưẠ-ỹ]/;
 
@@ -18,20 +19,27 @@ const CODE_START = new RegExp([
     'while\\s*\\(', 'while\\s+.+(:|\\bdo)$', 'if\\s*\\(', 'if\\s+.+(:|\\bthen)$', 'elif\\s', 'else\\b', 'switch\\s*\\(', 'case\\s+.+:', 'try\\s*[:{]?$', 'catch\\s*\\(', 'except\\b',
     'print\\s*\\(', 'printf\\s*\\(', 'scanf\\s*\\(', 'puts\\s*\\(', 'cout\\s*<<', 'cin\\s*>>', 'System\\.', 'console\\.', 'Console\\.',
     'begin\\b', 'end\\s*[;.]?$', 'program\\s+\\w', 'uses\\s+\\w', '(procedure|function)\\s+\\w+', 'writeln', 'readln', 'write\\s*\\(', 'read\\s*\\(',
-    '(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER)\\s', '<\\?php', '<\\/?[a-z][\\w-]*(\\s[^>]*)?>', '\\$\\w+\\s*=',
+    '(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER)\\s', '<\\?php', '^\\?>$','<\\/?[a-z][\\w-]*(\\s[^>]*)?>', '\\$\\w+\\s*=',
 ].map((p) => `(?:${p})`).join('|'));
 
 const MATH_FUNCS = /^(sin|cos|tan|cot|log|ln|lg|exp|sqrt|lim|max|min|abs|arcsin|arccos|arctan)$/i;
 
 /** Strip string literals and comments so their content (often Vietnamese) does not veto a code line. */
 function stripLiteralsAndComments(line) {
-    return line
-        .replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`/g, '""')
+    let code = line.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`/g, '""');
+    // HTML element: its text content (<a href="…">Trang chủ</a>) is not code to judge.
+    if (/^<[A-Za-z!/?]/.test(code) && />$/.test(code)) code = code.replace(/>[^<>]*</g, '><');
+    // Pascal comments { … } and (* … *)
+    if (/:=|\b(?:begin|end|then|do|writeln|readln)\b/i.test(code)) code = code.replace(/\{[^{}]*\}|\(\*.*?\*\)/g, ' ');
+    // In Python `//` is floor division (x //= 2), only `#` starts a comment.
+    if (isPythonLike(code)) return code.replace(/#.*$/, ' ');
+    return code
         .replace(/\/\*.*?\*\//g, ' ')
         .replace(/(\/\/|--\s|#(?!\s*(include|define|import|pragma)\b)).*$/, ' ');
 }
 
-const isCommentOnly = (line) => /^\s*(\/\/|#(?!\s*(include|define|import|pragma)\b)|\/\*|\*\s|--\s)/.test(line);
+const isCommentOnly = (line) => /^\s*(\/\/|#(?!\s*(include|define|import|pragma)\b)|\/\*|\*\s|--\s|\(\*)/.test(line)
+    || /^\{[^{}]*\}$/.test(line.trim()); // Pascal { comment }
 
 /**
  * Score one plain-text line. Returns { score, neutral } where neutral means
@@ -41,7 +49,7 @@ export function scoreCodeLine(raw) {
     const line = String(raw ?? '').replace(/\u00A0/g, ' ');
     const trimmed = line.trim();
     if (!trimmed) return { score: 0, neutral: false };
-    if (/^[{}()[\];,]+$/.test(trimmed) || /^end[;.]?$/i.test(trimmed)) return { score: 1, neutral: true };
+    if (/^[{}()[\];,]+$/.test(trimmed) || /^end[;.]?$/i.test(trimmed) || trimmed === '?>') return { score: 1, neutral: true };
     if (isCommentOnly(trimmed)) return { score: 0, neutral: true };
 
     const code = stripLiteralsAndComments(trimmed);
@@ -53,8 +61,15 @@ export function scoreCodeLine(raw) {
     // mathematical equality such as x = 2.
     if (/^[A-Za-z_]\w*\s*=\s*(?:["'`]|\[|\{)/.test(trimmed)) score += 1;
     if (/[;{]\s*$|^\s*}|\)\s*:\s*$/.test(code)) score += 1;
-    if (/(==|!=|\+\+|--(?!\s)|\+=|-=|\*=|\/=|%=|:=|->|=>|::|<<|>>|&&|\|\|)/.test(code)) score += 1;
+    // x += 1, i++, a == b, p && q exist only in code; ->, =>, << also appear in prose arrows.
+    if (/\+\+|[-+*/%]=|==|&&|\|\|/.test(code)) score += 2;
+    else if (/(!=|--(?!\s)|:=|->|=>|::|<<|>>)/.test(code)) score += 1;
     else if (/\b[A-Za-z_]\w*(\[[^\]]*\])?\s*=\s*[^=\s]/.test(code)) score += 1; // plain assignment
+    // x = x * 2 - 3: a variable updated from itself is a statement, not an equation (x^2 is math).
+    const self = code.match(/^([A-Za-z_]\w*)\s*=(?!=)(.*)$/);
+    if (self && !/\^/.test(code) && new RegExp(`\\b${self[1]}\\b`).test(self[2])) score += 1;
+    // Python-only operators: x //= 2, a // b, 3**2
+    if (/\/\/|\*\*/.test(code) && isPythonLike(code)) score += 1;
     const calls = [...code.matchAll(/\b([A-Za-z_]\w+)\s*\(/g)].map((m) => m[1]).filter((n) => !MATH_FUNCS.test(n));
     if (calls.length > 0) score += 1;
     // A line that is only a call statement: f(), obj.run(x), stack.pop();

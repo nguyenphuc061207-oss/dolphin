@@ -20,7 +20,8 @@ const UNICODE_TO_LATEX = [
   [/≠/g, '\\neq'], [/≈/g, '\\approx'], [/∝/g, '\\propto'], [/≡/g, '\\equiv'], 
   [/≅/g, '\\cong'], [/≈/g, '\\approx'], [/∼/g, '\\sim'], [/∝/g, '\\propto'],
   [/×/g, '\\times'], [/÷/g, '\\div'], [/·/g, '\\cdot'], [/∗/g, '\\ast'], [/∘/g, '\\circ'],
-  [/∂/g, '\\partial'], [/∇/g, '\\nabla'], [/√/g, '\\sqrt'], [/∛/g, '\\sqrt[3]'], [/∜/g, '\\sqrt[4]'],
+  [/∂/g, '\\partial'], [/∇/g, '\\nabla'], [/√/g, '\\sqrt'],
+  [/⩽/g, '\\leqslant'], [/⩾/g, '\\geqslant'], [/∽/g, '\\backsim'],
 
   // Set Theory & Logic
   [/∈/g, '\\in'], [/∉/g, '\\notin'], [/∋/g, '\\ni'], [/∌/g, '\\not\\ni'], 
@@ -38,7 +39,7 @@ const UNICODE_TO_LATEX = [
   [/⊥/g, '\\perp'], [/∥/g, '\\parallel'], [/∦/g, '\\not\\parallel'], 
   [/∠/g, '\\angle'], [/∡/g, '\\measuredangle'], [/∢/g, '\\sphericalangle'],
   [/△/g, '\\triangle'], [/□/g, '\\square'], [/◊/g, '\\lozenge'],
-  [/°/g, '^\\circ'], [/′/g, '^\prime'], [/″/g, '^{\prime\prime}'],
+  [/°/g, '^\\circ'], [/‴/g, '^{\\prime\\prime\\prime}'], [/″/g, '^{\\prime\\prime}'], [/′/g, '^{\\prime}'],
   
   // Super/Sub scripts
   [/⁰/g, '^{0}'], [/¹/g, '^{1}'], [/²/g, '^{2}'], [/³/g, '^{3}'], [/⁴/g, '^{4}'], 
@@ -76,6 +77,16 @@ export function normalizeUnicodeToLatex(text) {
     // Even indices are plain text, odd indices are matched math/img blocks
     if (i % 2 === 0) {
       let result = parts[i];
+
+      // 0. Combining marks: AB⃗ → vector AB, x̄ / A̅B̅ → overline
+      result = result.replace(/([A-Za-z]{1,3})⃗/g, (m, v) => `$\\overrightarrow{${v}}$`);
+      result = result.replace(/((?:[A-Za-z0-9][̄̅])+)/g, (m) => `$\\overline{${m.replace(/[̄̅]/g, '')}}$`);
+
+      // 0b. Cube / fourth roots: ∛8, ∜(x+1); a lone ∛ still shows the sign
+      result = result.replace(/([∛∜])(?:\(([^)]+)\)|([a-zA-Z0-9]+))?/g, (m, sign, paren, word) => {
+        const n = sign === '∛' ? 3 : 4;
+        return `$\\sqrt[${n}]{${paren ?? word ?? '\\,'}}$`;
+      });
 
       // 1. sqrt(...) or \sqrt(...) or √(...) -> \sqrt{...}
       //    A bare sqrt(...) that is a function call in code prose stays as typed.

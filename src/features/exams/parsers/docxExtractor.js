@@ -119,7 +119,7 @@ const toLatex = (() => {
             '∑': '\\sum', '∏': '\\prod', '∐': '\\coprod',
 
             // ── Dots & ellipsis ──────────────────────────────────────────────────
-            '⋯': '\\cdots', '⋮': '\\vdots', '⋱': '\\ddots', '⋰': '\\iddots',
+            '⋯': '\\cdots', '⋮': '\\vdots', '⋱': '\\ddots', // ⋰ stays as the character: KaTeX has no \iddots
             '…': '\\ldots', '·': '\\cdot',
 
             // ── Number sets (blackboard bold) ────────────────────────────────────
@@ -151,15 +151,75 @@ const toLatex = (() => {
             '♦': '\\diamond', '♠': '\\spadesuit', '♥': '\\heartsuit', '♣': '\\clubsuit',
             '★': '\\bigstar', '☆': '\\star',
             '©': '\\copyright', '®': '\\circledR', '™': '\\text{\\texttrademark}',
-            'Å': '\\text{\r\nÅ}',
+            'Å': '\\text{Å}',
+            '⩽': '\\leqslant', '⩾': '\\geqslant', '∽': '\\backsim', '−': '-', '∆': '\\Delta',
+            '⊈': '\\nsubseteq', '⊉': '\\nsupseteq', '≔': ':=', '∌': '\\not\\ni', '⟦': '[\\![', '⟧': ']\\!]',
+            '〈': '\\langle', '〉': '\\rangle',
+        };
+
+        // LaTeX special characters typed as plain text in an equation (50%, {1;2}, a&b …).
+        // `$` becomes \textdollar: the $…$ delimiters would otherwise split even an escaped \$.
+        const MATH_ESCAPE = {
+            '\\': '\\backslash', '{': '\\{', '}': '\\}', '%': '\\%', '&': '\\&', '#': '\\#',
+            '$': '\\text{\\textdollar}', '_': '\\_', '^': '\\hat{}', '~': '\\sim',
+        };
+        const TEXT_ESCAPE = {
+            '\\': '\\textbackslash{}', '{': '\\{', '}': '\\}', '%': '\\%', '&': '\\&', '#': '\\#',
+            '$': '\\textdollar{}', '_': '\\_', '^': '\\textasciicircum{}', '~': '\\textasciitilde{}',
         };
 
         /**
          * Chuyển một chuỗi Unicode thành LaTeX bằng cách thay thế từng ký tự.
-         * Ký tự không có trong map thì giữ nguyên.
+         * Mỗi lệnh (\pi, \geq …) kết thúc bằng dấu cách để "2πr" không thành "\pir"
+         * (kể cả khi chữ r nằm ở run kế tiếp). `keepAmp`: & là dấu căn cột trong hệ phương trình.
          */
-        const applySymbolMap = (str) =>
-            [...str].map((ch) => SYMBOL_MAP[ch] ?? ch).join('');
+        const applySymbolMap = (str, keepAmp = false) =>
+            [...str].map((ch) => {
+                const m = SYMBOL_MAP[ch] ?? ((keepAmp && ch === '&') ? '&' : MATH_ESCAPE[ch]) ?? ch;
+                return /\\[A-Za-z]+$/.test(m) ? `${m} ` : m;
+            }).join('');
+
+        const VI_LETTER = /[À-ÃÈ-ÊÌÍÒ-ÕÙÚÝà-ãè-êìíò-õùúýĂăĐđĨĩŨũƠơƯưẠ-ỹ]/;
+        const isTextWord = (t) => VI_LETTER.test(t) || /^[A-Za-z]{2,}$/.test(t);
+
+        /**
+         * One equation run → LaTeX. Vietnamese words (and plain words next to them) become
+         * \text{…}; everything else stays math, so "với x≤2" → \text{với }x\leq 2.
+         */
+        let eqArrDepth = 0;
+        const runToLatex = (raw, style) => {
+            const tokens = raw.match(/[A-Za-zÀ-ỹĐđ]+|\s+|[\s\S]/gu) || [];
+            const isText = tokens.map((t) => VI_LETTER.test(t));
+            // grow each Vietnamese word over neighbouring spaces and words
+            for (let i = 0; i < tokens.length; i++) {
+                if (!isText[i] || !VI_LETTER.test(tokens[i])) continue;
+                for (let j = i - 1; j >= 0 && (/^\s+$/.test(tokens[j]) || isTextWord(tokens[j])); j--) isText[j] = true;
+                for (let j = i + 1; j < tokens.length && (/^\s+$/.test(tokens[j]) || isTextWord(tokens[j])); j++) isText[j] = true;
+            }
+            const math = (s) => {
+                if (!s) return '';
+                const m = applySymbolMap(s, eqArrDepth > 0);
+                if (style === 'bi') return `\\boldsymbol{${m}}`;
+                if (style === 'b') return `\\mathbf{${m}}`;
+                if (style === 'p' && /[A-Za-z]/.test(s)) return `\\mathrm{${m}}`;
+                return m;
+            };
+            let out = '';
+            let buf = '';
+            let bufText = null;
+            const flush = () => {
+                if (bufText) out += `\\text{${[...buf].map((ch) => TEXT_ESCAPE[ch] ?? ch).join('')}}`;
+                else out += math(buf);
+                buf = '';
+            };
+            tokens.forEach((t, i) => {
+                if (bufText !== null && bufText !== isText[i]) flush();
+                bufText = isText[i];
+                buf += t;
+            });
+            flush();
+            return out;
+        };
 
         // ── Kiểu rPr (math run properties) ──────────────────────────────────────
         const getRPrStyle = (rPr) => {
@@ -202,19 +262,8 @@ const toLatex = (() => {
                     const t = firstChild(node, 't');
                     if (!t) return '';
 
-                    const raw = t.textContent;
-                    const mapped = applySymbolMap(raw);
-
-                    const rPr = firstChild(node, 'rPr');
-                    const style = getRPrStyle(rPr);
-
-                    const hasVietnamese = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(raw);
-
-                    if (style === 'bi') return `\\boldsymbol{${mapped}}`;
-                    if (style === 'b') return `\\mathbf{${mapped}}`;
-                    if (style === 'p' || hasVietnamese) return `\\text{${mapped}}`; // plain/roman text
-                    // 'i' (italic) is the default math style — no wrapper needed
-                    return mapped;
+                    // 'p' = upright (Normal text / function names), 'b', 'bi'; 'i' is the default math style
+                    return runToLatex(t.textContent, getRPrStyle(firstChild(node, 'rPr')));
                 }
 
                 // ── Fraction ─────────────────────────────────────────────────────
@@ -351,37 +400,37 @@ const toLatex = (() => {
                     const pr = firstChild(node, 'dPr');
                     let beg = '(', end = ')';
                     if (pr) {
+                        // An explicitly empty begChr/endChr means "no bracket on that side":
+                        // a system of equations is { … with nothing on the right.
                         const b = firstChild(pr, 'begChr');
                         const en = firstChild(pr, 'endChr');
-                        if (b) beg = getMVal(b) || '(';
-                        if (en) end = getMVal(en) || ')';
+                        if (b) beg = getMVal(b);
+                        if (en) end = getMVal(en);
                     }
 
                     // Separator character between multiple elements (e.g. | in ⟨…|…⟩)
                     const sepNode = pr ? firstChild(pr, 'sepChr') : null;
                     const sepChr = sepNode ? getMVal(sepNode) : ',';
-                    const sepTex = sepChr === '|' ? ' \\middle| ' : `, `;
-
-                    // Plain absolute value: empty beg + end means ||
-                    if (beg === '' && end === '') { beg = '|'; end = '|'; }
+                    const sepTex = sepChr === '|' ? ' \\middle| ' : `${applySymbolMap(sepChr || ',')} `;
 
                     const BEG_MAP = {
-                        '(': '\\left(', '[': '\\left[',
+                        '': '\\left.', '(': '\\left(', '[': '\\left[', ']': '\\left]',
                         '{': '\\left\\{', '|': '\\left|',
                         '‖': '\\left\\|', '⌈': '\\left\\lceil',
-                        '⌊': '\\left\\lfloor', '⟨': '\\left\\langle',
+                        '⌊': '\\left\\lfloor', '⟨': '\\left\\langle', '〈': '\\left\\langle',
                         '⌜': '\\left\\ulcorner', '⌞': '\\left\\llcorner',
                     };
                     const END_MAP = {
-                        ')': '\\right)', ']': '\\right]',
+                        '': '\\right.', ')': '\\right)', ']': '\\right]', '[': '\\right[',
                         '}': '\\right\\}', '|': '\\right|',
                         '‖': '\\right\\|', '⌉': '\\right\\rceil',
-                        '⌋': '\\right\\rfloor', '⟩': '\\right\\rangle',
+                        '⌋': '\\right\\rfloor', '⟩': '\\right\\rangle', '〉': '\\right\\rangle',
                         '⌝': '\\right\\urcorner', '⌟': '\\right\\lrcorner',
                     };
 
-                    const lBeg = BEG_MAP[beg] ?? `\\left${beg}`;
-                    const lEnd = END_MAP[end] ?? `\\right${end}`;
+                    // Any other character cannot follow \left: draw it as a plain symbol instead
+                    const lBeg = BEG_MAP[beg] ?? `\\left.${applySymbolMap(beg)}`;
+                    const lEnd = END_MAP[end] ?? `${applySymbolMap(end)}\\right.`;
 
                     const parts = allChildren(node, 'e').map(childOf);
                     return `${lBeg}${parts.join(sepTex)}${lEnd}`;
@@ -393,26 +442,17 @@ const toLatex = (() => {
                     const fName = firstChild(node, 'fName');
                     const e = firstChild(node, 'e');
 
-                    // All standard LaTeX function names (no \ prefix in source text)
-                    const FUNC_NAMES = new Set([
-                        'sin', 'cos', 'tan', 'cot', 'sec', 'csc',
-                        'arcsin', 'arccos', 'arctan', 'arccot', 'arcsec', 'arccsc',
-                        'sinh', 'cosh', 'tanh', 'coth', 'sech', 'csch',
-                        'ln', 'log', 'lg', 'exp',
-                        'lim', 'limsup', 'liminf', 'varlimsup', 'varliminf',
-                        'max', 'min', 'sup', 'inf', 'arg',
-                        'gcd', 'lcm', 'det', 'dim', 'ker', 'deg',
-                        'hom', 'Hom', 'Pr', 'tr', 'rank',
-                    ]);
-
                     const nameRaw = childOf(fName).trim();
-                    // Strip leading backslash if already present
-                    const nameClean = nameRaw.replace(/^\\/, '');
-                    const nameTex = FUNC_NAMES.has(nameClean)
-                        ? `\\${nameClean}`
-                        : nameRaw; // keep as-is (could be a letter or custom operator)
+                    // Function names are upright runs: \mathrm{sin}, or already \lim_{…}
+                    const nameClean = nameRaw.replace(/^\\(?:mathrm|text)\{([^{}]*)\}$/, '$1').replace(/^\\/, '').trim();
+                    // Any letter name (sin, tg, cotg, arccot, lcm …) is an upright operator.
+                    // \operatorname works for names KaTeX has no command for.
+                    const nameTex = /^[A-Za-z]+$/.test(nameClean)
+                        ? `\\operatorname{${nameClean}}`
+                        : nameRaw;
 
-                    return `${nameTex}\\left(${childOf(e)}\\right)`;
+                    // Word keeps the brackets of sin(x) inside e; add none of our own.
+                    return `${nameTex}{${childOf(e)}}`;
                 }
 
                 // ── Accent (hat, tilde, vec, …) ──────────────────────────────────
@@ -469,9 +509,10 @@ const toLatex = (() => {
                     const lim = firstChild(node, 'lim');
                     const eTex = childOf(e).trim();
                     const limTex = childOf(lim);
-                    // Named operators: use subscript directly; otherwise \underset
-                    return /^\\?(lim|max|min|sup|inf|limsup|liminf|varlimsup|varliminf)/.test(eTex)
-                        ? `${eTex}_{${limTex}}`
+                    // Named operators (Word writes "lim" as an upright run): use a subscript; otherwise \underset
+                    const op = eTex.replace(/^\\(?:mathrm|text)\{([^{}]*)\}$/, '$1').replace(/^\\/, '').trim();
+                    return /^(lim|max|min|sup|inf|limsup|liminf|varlimsup|varliminf)$/.test(op)
+                        ? `\\${op}_{${limTex}}`
                         : `\\underset{${limTex}}{${eTex}}`;
                 }
 
@@ -490,7 +531,8 @@ const toLatex = (() => {
                 case 'm': {
                     const pr = firstChild(node, 'mPr');
                     const begNode = pr ? firstChild(pr, 'begChr') : null;
-                    const begChr = begNode ? getMVal(begNode) : '(';
+                    // A Word matrix has no brackets of its own; they come from the surrounding m:d
+                    const begChr = begNode ? getMVal(begNode) : '';
 
                     // Map opening delimiter → LaTeX environment name
                     const ENV_MAP = {
@@ -512,8 +554,15 @@ const toLatex = (() => {
                 // ── Equation array (cases, piecewise) ────────────────────────────
 
                 case 'eqArr': {
+                    // The { of a system comes from the surrounding m:d, so no cases brace here.
+                    // "&" typed in the rows is Word's alignment point.
+                    eqArrDepth++;
                     const rows = allChildren(node, 'e').map(childOf);
-                    return `\\begin{cases}${rows.join(' \\\\ ')}\\end{cases}`;
+                    eqArrDepth--;
+                    const body = rows.join(' \\\\ ');
+                    return rows.some((r) => /(^|[^\\])&/.test(r))
+                        ? `\\begin{aligned}${body}\\end{aligned}`
+                        : `\\begin{array}{l}${body}\\end{array}`;
                 }
 
                 // ── Group characters (overbrace, underbrace, arc, arrow) ─────────
@@ -534,6 +583,7 @@ const toLatex = (() => {
                         '⌣': `\\overset{\\frown}{${eTex}}`,
                         '\u2322': `\\overset{\\frown}{${eTex}}`,
                         '⌢': `\\overset{\\frown}{${eTex}}`,
+                        '⌒': `\\overset{\\frown}{${eTex}}`, // cung AB
                         '⏞': `\\overbrace{${eTex}}`,
                         '⏟': `\\underbrace{${eTex}}`,
                         '⏜': `\\overset{\\frown}{${eTex}}`,
@@ -576,7 +626,7 @@ const toLatex = (() => {
                     if (isZeroW && isZeroH) return `\\phantom{${eTex}}`;
                     if (isZeroW) return `\\hphantom{${eTex}}`;
                     if (isZeroH) return `\\vphantom{${eTex}}`;
-                    return `\\vphantom{${eTex}}`;
+                    return eTex; // a visible phantom with no flags is just its content
                 }
 
                 // ── Stacked elements (overset / underset via ctrl chars) ──────────
@@ -661,22 +711,39 @@ class NumberingDictionary {
     }
 }
 
-// Symbol-font private-use chars (w:sym) → real Unicode for the common ones
+// Insert → Symbol (w:sym) stores a font position, not a character. The Symbol font puts
+// Greek letters and math signs on ASCII codes (0x24 is ∃, not $), so map its whole layout.
 const SYMBOL_FONT_MAP = {
-    0xB1: '±', 0xB3: '≥', 0xA3: '≤', 0xB9: '≠', 0xBB: '≈', 0xB4: '×', 0xB8: '÷', 0xA5: '∞',
-    0xAE: '→', 0xAC: '←', 0xAB: '↔', 0xDE: '⇒', 0xDC: '⇐', 0xDB: '⇔', 0xB0: '°',
-    0x61: 'α', 0x62: 'β', 0x67: 'γ', 0x64: 'δ', 0x65: 'ε', 0x71: 'θ', 0x6C: 'λ', 0x6D: 'μ',
-    0x70: 'π', 0x73: 'σ', 0x66: 'φ', 0x77: 'ω', 0x44: 'Δ', 0x57: 'Ω', 0x53: 'Σ', 0x50: 'Π',
-    0xD6: '√', 0xB7: '•', 0xA7: '♣', 0xD7: '⋅', 0xCE: '∈', 0xC7: '∩', 0xC8: '∪', 0xB6: '∂',
+    0x22: '∀', 0x24: '∃', 0x27: '∋', 0x2A: '∗', 0x2D: '−', 0x40: '≅', 0x5C: '∴', 0x5E: '⊥', 0x60: '‾', 0x7E: '∼',
+    0x41: 'Α', 0x42: 'Β', 0x43: 'Χ', 0x44: 'Δ', 0x45: 'Ε', 0x46: 'Φ', 0x47: 'Γ', 0x48: 'Η', 0x49: 'Ι',
+    0x4A: 'ϑ', 0x4B: 'Κ', 0x4C: 'Λ', 0x4D: 'Μ', 0x4E: 'Ν', 0x4F: 'Ο', 0x50: 'Π', 0x51: 'Θ', 0x52: 'Ρ',
+    0x53: 'Σ', 0x54: 'Τ', 0x55: 'Υ', 0x56: 'ς', 0x57: 'Ω', 0x58: 'Ξ', 0x59: 'Ψ', 0x5A: 'Ζ',
+    0x61: 'α', 0x62: 'β', 0x63: 'χ', 0x64: 'δ', 0x65: 'ε', 0x66: 'φ', 0x67: 'γ', 0x68: 'η', 0x69: 'ι',
+    0x6A: 'ϕ', 0x6B: 'κ', 0x6C: 'λ', 0x6D: 'μ', 0x6E: 'ν', 0x6F: 'ο', 0x70: 'π', 0x71: 'θ', 0x72: 'ρ',
+    0x73: 'σ', 0x74: 'τ', 0x75: 'υ', 0x76: 'ϖ', 0x77: 'ω', 0x78: 'ξ', 0x79: 'ψ', 0x7A: 'ζ',
+    0xA0: '€', 0xA1: 'ϒ', 0xA2: '′', 0xA3: '≤', 0xA4: '⁄', 0xA5: '∞', 0xA6: 'ƒ', 0xA7: '♣', 0xA8: '♦',
+    0xA9: '♥', 0xAA: '♠', 0xAB: '↔', 0xAC: '←', 0xAD: '↑', 0xAE: '→', 0xAF: '↓', 0xB0: '°', 0xB1: '±',
+    0xB2: '″', 0xB3: '≥', 0xB4: '×', 0xB5: '∝', 0xB6: '∂', 0xB7: '•', 0xB8: '÷', 0xB9: '≠', 0xBA: '≡',
+    0xBB: '≈', 0xBC: '…', 0xBD: '|', 0xBE: '—', 0xBF: '↵', 0xC0: 'ℵ', 0xC1: 'ℑ', 0xC2: 'ℜ', 0xC3: '℘',
+    0xC4: '⊗', 0xC5: '⊕', 0xC6: '∅', 0xC7: '∩', 0xC8: '∪', 0xC9: '⊃', 0xCA: '⊇', 0xCB: '⊄', 0xCC: '⊂',
+    0xCD: '⊆', 0xCE: '∈', 0xCF: '∉', 0xD0: '∠', 0xD1: '∇', 0xD2: '®', 0xD3: '©', 0xD4: '™', 0xD5: '∏',
+    0xD6: '√', 0xD7: '⋅', 0xD8: '¬', 0xD9: '∧', 0xDA: '∨', 0xDB: '⇔', 0xDC: '⇐', 0xDD: '⇑', 0xDE: '⇒',
+    0xDF: '⇓', 0xE0: '◊', 0xE1: '〈', 0xE2: '®', 0xE3: '©', 0xE4: '™', 0xE5: '∑', 0xE6: '⎛', 0xE7: '⎜',
+    0xE8: '⎝', 0xE9: '⎡', 0xEA: '⎢', 0xEB: '⎣', 0xEC: '⎧', 0xED: '⎨', 0xEE: '⎩', 0xEF: '⎪', 0xF1: '〉',
+    0xF2: '∫', 0xF3: '⌠', 0xF4: '⎮', 0xF5: '⌡', 0xF6: '⎞', 0xF7: '⎟', 0xF8: '⎠', 0xF9: '⎤', 0xFA: '⎥',
+    0xFB: '⎦', 0xFC: '⎫', 0xFD: '⎬', 0xFE: '⎭',
 };
+// Wingdings ticks and boxes used in Đúng/Sai tables
+const WINGDINGS_MAP = { 0x6C: '●', 0x6E: '■', 0x6F: '□', 0xA7: '▪', 0xA8: '◻', 0xFB: '✗', 0xFC: '✓', 0xFD: '☒', 0xFE: '☑' };
 
 const symToChar = (el) => {
     const code = parseInt(el.getAttribute('w:char') || '', 16);
     if (!code) return '';
     const font = (el.getAttribute('w:font') || '').toLowerCase();
     const low = code >= 0xF000 ? code - 0xF000 : code;
-    if (font === 'symbol' && SYMBOL_FONT_MAP[low]) return SYMBOL_FONT_MAP[low];
-    return String.fromCharCode(font === 'symbol' ? low : code);
+    if (font === 'symbol') return SYMBOL_FONT_MAP[low] ?? String.fromCharCode(low);
+    if (font === 'wingdings' && WINGDINGS_MAP[low]) return WINGDINGS_MAP[low]; // Wingdings 2/3 use other layouts
+    return String.fromCharCode(code);
 };
 
 // ── Run / paragraph extraction ───────────────────────────────────────────
@@ -721,7 +788,15 @@ const wrap = (html, p, withCode) => {
     return out;
 };
 
-const MIME_BY_EXT = { jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', svg: 'image/svg+xml', webp: 'image/webp' };
+// wmf/emf keep their real type: MathType / Equation 3.0 formulas are stored this way and
+// browsers cannot draw them, so the import screen must be able to find and report them.
+const MIME_BY_EXT = {
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', svg: 'image/svg+xml', webp: 'image/webp',
+    bmp: 'image/bmp', tif: 'image/tiff', tiff: 'image/tiff', wmf: 'image/x-wmf', emf: 'image/x-emf',
+};
+
+/** Image types browsers cannot display (MathType / Equation 3.0 formula previews). */
+export const UNDISPLAYABLE_IMAGE = /data:image\/(?:x-wmf|x-emf|tiff)/;
 
 export async function extractDocxToHtml(arrayBuffer) {
     const zip = await JSZip.loadAsync(arrayBuffer);
