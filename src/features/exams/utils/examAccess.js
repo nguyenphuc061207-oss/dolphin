@@ -9,7 +9,7 @@ export function canReviewSubmission(userId, submission, exam) {
 }
 
 export function accessErrorMessage(error, fallback) {
-  return error?.code === 'permission-denied'
+  return ['permission-denied', 'functions/permission-denied'].includes(error?.code)
     ? 'Bạn không có quyền xem bài làm này.'
     : error?.message || fallback;
 }

@@ -1,5 +1,5 @@
 import { withTimeout } from '@/shared/utils/runtimeSafety';
-import { gradeExam as recalculate } from '../utils/examSafety';
+import { recalculateSubmission } from '../services/examApi';
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { db } from "@/shared/config/firebase";
@@ -8,8 +8,6 @@ import {
   query,
   where,
   getDocs,
-  doc,
-  updateDoc,
 } from "firebase/firestore";
 import { useAuth } from "@/features/auth/hooks/useAuth";
 import {
@@ -62,7 +60,9 @@ export default function RecalculateScores() {
       for (const examId of examIds) {
         const subQ = query(
           collection(db, "submissions"),
-          where("examId", "==", examId)
+          where("examId", "==", examId),
+          where("teacherId", "==", currentUser.uid),
+          where("schemaVersion", "==", 2)
         );
         const subSnap = await withTimeout(getDocs(subQ));
         subSnap.forEach((d) =>
@@ -75,13 +75,9 @@ export default function RecalculateScores() {
       let totalScanned = 0;
 
       for (const sub of allSubmissions) {
-        if (!Array.isArray(sub.examSnapshot) || !sub.answers) continue;
         totalScanned++;
 
-        const { correct: newCorrect, score: newScore } = recalculate(
-          sub.examSnapshot,
-          sub.answers
-        );
+        const { correctCount: newCorrect, score: newScore, hasMultiple } = await recalculateSubmission({ submissionId: sub.id });
 
         const oldScore = sub.score ?? 0;
         const oldCorrect = sub.correctCount ?? 0;
@@ -99,10 +95,8 @@ export default function RecalculateScores() {
             newScore,
             oldCorrect,
             newCorrect,
-            totalQuestions: sub.totalQuestions || sub.examSnapshot.length,
-            hasMultiple: sub.examSnapshot.some(
-              (q) => (q.type || "single") === "multiple"
-            ),
+            totalQuestions: sub.totalQuestions,
+            hasMultiple,
           });
         }
       }
@@ -134,10 +128,7 @@ export default function RecalculateScores() {
 
     for (const r of results) {
       try {
-        await withTimeout(updateDoc(doc(db, "submissions", r.id), {
-          score: r.newScore,
-          correctCount: r.newCorrect,
-        }));
+        await recalculateSubmission({ submissionId: r.id, apply: true });
         updated++;
       } catch (err) {
         console.error(`Error updating ${r.id}:`, err);

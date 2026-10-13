@@ -41,9 +41,8 @@ export default function ExamSecurityHelp({ htmlFor, label, level, existingExam =
             </div>
             {open && <div id={helpId} role="tooltip" className="exam-security-help-content">
                 <strong>{label}</strong>
-                <p>{level === 'normal'
-                    ? 'Chỉ yêu cầu mở toàn màn hình lúc bắt đầu. Không kiểm tra màn hình phụ, không giám sát hoặc ghi nhận việc chuyển tab hay thoát toàn màn hình trong lúc làm bài.'
-                    : 'Yêu cầu toàn màn hình và chặn màn hình phụ trước khi vào thi. Trong lúc làm bài, hệ thống khóa bài và ghi nhận khi rời tab/cửa sổ, thoát toàn màn hình hoặc kết nối thêm màn hình phụ.'}</p>
+                {level === 'normal' && <p>Chỉ yêu cầu mở toàn màn hình lúc bắt đầu. Không kiểm tra màn hình phụ, không giám sát hoặc ghi nhận việc chuyển tab hay thoát toàn màn hình trong lúc làm bài. Không vào thi được trên iPhone.</p>}
+                {level === 'strict' && <p>Yêu cầu toàn màn hình và chặn màn hình phụ trước khi vào thi. Trong lúc làm bài, hệ thống khóa bài và ghi nhận khi rời tab/cửa sổ, thoát toàn màn hình hoặc kết nối thêm màn hình phụ. Chỉ vào thi được bằng Chrome hoặc Edge trên máy tính. Bật "Cho phép điện thoại" bên dưới để học sinh dùng điện thoại vẫn vào thi được.</p>}
                 {existingExam && <p>Thay đổi áp dụng khi học sinh tải lại hoặc mở bài thi.</p>}
             </div>}
         </div>

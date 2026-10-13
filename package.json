@@ -13,6 +13,7 @@
     "@google/generative-ai": "^0.24.1",
     "clsx": "^2.1.1",
     "firebase": "^12.13.0",
+    "firebase-admin": "14.5.0",
     "framer-motion": "^12.40.0",
     "jszip": "^3.10.1",
     "katex": "^0.16.47",

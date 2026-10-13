@@ -6,10 +6,22 @@ export function readExamProgress(examId, userId, durationSeconds, storage = glob
   const raw = storage.getItem(progressKey(examId, userId));
   if (!raw) return null;
   const saved = restoreProgress(raw, durationSeconds);
+  // Old browser backups may contain answer keys. They are never trusted or reused.
+  saved.examSnapshot = saved.examSnapshot.map(q => Object.fromEntries(
+    ['type', 'content', 'options', 'scoringMethod'].filter(k => q[k] !== undefined).map(k => [k, q[k]])
+  ));
+  const publicText = JSON.stringify(saved.examSnapshot);
+  saved.mathDictionary = Object.fromEntries(Object.entries(saved.mathDictionary || {}).filter(([key]) => publicText.includes(key)));
   if ((saved.studentId && saved.studentId !== userId) || (saved.examId && saved.examId !== examId)) {
     throw new Error('Bản lưu không thuộc tài khoản hoặc đề thi này.');
   }
   return saved;
+}
+
+/** Forget this browser's copy of an attempt (answers, position, recorded leaves). */
+export function removeExamProgress(examId, userId, storage = globalThis.localStorage) {
+  storage.removeItem(progressKey(examId, userId));
+  storage.removeItem(`exam_violations_${examId}_${userId}`);
 }
 
 export function listExamProgress(userId, storage = globalThis.localStorage) {

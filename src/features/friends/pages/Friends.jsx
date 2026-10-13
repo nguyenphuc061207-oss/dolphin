@@ -170,6 +170,7 @@ export default function Friends() {
       const batch = writeBatch(db);
       // 1. Tạo liên kết bạn bè 2 chiều đồng bộ
       batch.set(doc(db, "friendships", `${reqItem.fromUid}_${reqItem.toUid}`), {
+        requestId: reqItem.id,
         userId: reqItem.fromUid,
         friendId: reqItem.toUid,
         friendName: reqItem.toName,
@@ -178,6 +179,7 @@ export default function Friends() {
       });
 
       batch.set(doc(db, "friendships", `${reqItem.toUid}_${reqItem.fromUid}`), {
+        requestId: reqItem.id,
         userId: reqItem.toUid,
         friendId: reqItem.fromUid,
         friendName: reqItem.fromName,

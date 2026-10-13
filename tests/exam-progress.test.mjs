@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readExamProgress, listExamProgress, progressKey } from '../src/features/exams/utils/examProgress.js';
+import { readExamProgress, listExamProgress, progressKey, removeExamProgress } from '../src/features/exams/utils/examProgress.js';
 
 const examSnapshot = [{ type: 'essay', content: 'Saved question' }];
 const draft = { examSnapshot, userAnswers: { 0: 'My answer' }, deadline: 1000, attemptId: 'same-attempt', page: 2, maxPage: 3, cheatCount: 2 };
@@ -34,4 +34,16 @@ test('mismatched owner/exam cannot be restored and failed storage does not mean 
   assert.deepEqual(listExamProgress('alice', store), []);
   assert.throws(() => readExamProgress('a', 'alice', 300, { getItem() { throw new Error('blocked'); } }));
   assert.equal(readExamProgress('missing', 'alice', 300, store), null);
+});
+
+test('removing a draft forgets only that exam and account on this browser', () => {
+  const store = storage([
+    [progressKey('exam', 'student'), JSON.stringify(draft)], ['exam_violations_exam_student', '{}'],
+    [progressKey('other', 'student'), JSON.stringify(draft)], [progressKey('exam', 'friend'), JSON.stringify(draft)],
+  ]);
+  const data = new Map([...Array(store.length).keys()].map(i => [store.key(i), store.getItem(store.key(i))]));
+  const writable = { ...storage(data), get length() { return data.size; }, key: i => [...data.keys()][i], getItem: k => data.get(k) ?? null, removeItem: k => data.delete(k) };
+  removeExamProgress('exam', 'student', writable);
+  assert.deepEqual([...data.keys()].sort(), [progressKey('exam', 'friend'), progressKey('other', 'student')].sort());
+  assert.deepEqual(listExamProgress('student', writable).map(d => d.examId), ['other']);
 });

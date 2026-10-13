@@ -1,12 +1,13 @@
 const types = new Set(['single', 'multiple', 'true_false', 'multi_true_false', 'essay']);
 
-export function validateQuestions(questions) {
+export function validateQuestions(questions, requireAnswers = true) {
   if (!Array.isArray(questions) || questions.length === 0) throw new Error('Đề thi thiếu danh sách câu hỏi. Vui lòng liên hệ giáo viên.');
   for (const [index, q] of questions.entries()) {
     const type = q?.type || 'single';
     if (!q || typeof q !== 'object' || !types.has(type) || typeof q.content !== 'string') throw new Error(`Câu ${index + 1} có dữ liệu không hợp lệ.`);
     if (type === 'essay') continue;
     if (!Array.isArray(q.options) || !q.options.length || q.options.some(o => typeof o !== 'string')) throw new Error(`Câu ${index + 1} thiếu phương án trả lời.`);
+    if (!requireAnswers) continue;
     const validIndex = v => v !== '' && v != null && Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) < q.options.length;
     const validAnswer = type === 'multi_true_false'
       ? Array.isArray(q.correctAnswer) && q.correctAnswer.length === q.options.length && q.correctAnswer.every(v => typeof v === 'boolean')
@@ -42,7 +43,7 @@ export function gradeExam(questions, answers = {}) {
 
 export function restoreProgress(raw, durationSeconds, now = Date.now()) {
   const progress = JSON.parse(raw);
-  validateQuestions(progress.examSnapshot);
+  validateQuestions(progress.examSnapshot, false);
   if (!progress.userAnswers || typeof progress.userAnswers !== 'object' || Array.isArray(progress.userAnswers)) throw new Error('Bản lưu câu trả lời không hợp lệ.');
   // Older snapshots have only remaining seconds. Zero must stay expired.
   const deadline = Number.isFinite(progress.deadline) ? progress.deadline

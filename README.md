@@ -17,46 +17,21 @@ Các biến môi trường: `VITE_GEMINI_API_KEY` cho trợ lý AI và
 `VITE_IMGBB_API_KEY` để tải ảnh khi tạo đề. Thiết lập Firebase nằm tại
 `src/shared/config/firebase.js`. File `.env` được Git bỏ qua.
 
-## Quyền xem bài nộp
+## Bảo vệ đáp án và bài nộp
 
-Bài chưa nộp được lưu trên cùng trình duyệt, riêng theo tài khoản và mã đề. Trong
-bảng điều khiển học sinh, mục **Bài thi đang làm dở** mở lại lượt thi với câu trả lời,
-thứ tự câu hỏi, vị trí, câu đánh dấu và hạn giờ đã lưu. **Lưu và thoát** lưu trước khi
-về bảng điều khiển; đóng tab không dừng đồng hồ. Bài hết giờ sẽ nộp câu trả lời đã
-lưu khi mở lại và tiếp tục. Bản lưu không đồng bộ sang thiết bị/trình duyệt khác.
+Backend Cloud Functions quản lý lượt thi, hạn giờ, lưu câu trả lời và chấm điểm.
+Đáp án/lời giải nằm trong examSecrets và submissionSecrets, học sinh không đọc
+trực tiếp được. API xem lại chỉ trả đáp án theo quyền và lịch công bố của đề.
+Chủ sở hữu đề vẫn xem và chấm lại bài qua API. Trình duyệt không tự ghi điểm.
 
-Kiểm thử khôi phục: `node --test tests/exam-progress.test.mjs`. Kiểm thử đóng/mở tab
-trên Edge: `node tests/exam-progress.browser.mjs <đường-dẫn-gói-playwright>`.
+Lượt đang làm dở được khôi phục theo mã và hạn giờ máy chủ; khi hết giờ chỉ chấm
+câu trả lời đã đồng bộ trước hạn. Bản nháp không chứa đáp án/lời giải. Lượt hết giờ mà
+học sinh chưa nộp được máy chủ tự nộp (`finishExpiredAttempts`) khi học sinh mở trang
+chủ/đề thi hoặc giáo viên mở danh sách bài nộp; bài nộp đó có cờ `autoSubmitted`.
 
-`firestore.rules` bảo vệ cả đọc trực tiếp bằng ID và truy vấn danh sách:
-
-- Học sinh chỉ đọc bài có `studentId` bằng UID đăng nhập.
-- Giáo viên đọc, chấm lại và xóa bài thuộc đề có `teacherId` bằng UID đăng nhập.
-  Dự án hiện xác định giáo viên phụ trách bằng chủ sở hữu đề, chưa có mô hình lớp
-  hoặc quyền quản trị viên riêng. Vai trò trong hồ sơ và `?from=teacher` không cấp quyền.
-- Không được đổi `studentId`, `examId` của bài nộp hoặc chiếm `teacherId` của đề.
-- Học sinh vẫn ẩn lịch sử và thử nộp lại cùng nội dung khi kết nối bị gián đoạn.
-- Các collection khác giữ chính sách cũ; đây không phải bộ phân quyền toàn ứng dụng.
-
-Kiểm thử bằng Firebase CLI và Java 21 trở lên:
-
-```sh
-node --test tests/*.test.mjs
-firebase emulators:exec --project demo-dolphin-access --only firestore "node --test tests/firestore-access.rules.mjs"
-```
-
-Emulator dùng dự án demo và dữ liệu giả, không truy cập dữ liệu thật. Để áp dụng
-lên hệ thống đang chạy, triển khai bản frontend mới và Rules vào đúng dự án:
-
-```sh
-firebase deploy --project azota-c0e26 --only firestore:rules
-```
-
-Chỉ build/deploy frontend không cập nhật Firestore Rules. Không giữ lại rule
-wildcard cho phép toàn bộ dữ liệu: các `allow` trùng đường dẫn được kết hợp bằng OR.
-Các truy vấn giáo viên chạy theo từng đề để không vượt giới hạn đọc tài liệu khi
-Rules kiểm tra chủ sở hữu. Chế độ khóa/thời điểm xem đáp án hiện vẫn do giao diện
-xử lý; bài nộp chứa cả điểm và đáp án trong cùng một document.
+Xem [SECURITY_DEPLOYMENT.md](SECURITY_DEPLOYMENT.md) để cài backend, thiết lập App
+Check, chạy Emulator, kiểm tra/chuyển dữ liệu cũ và triển khai đồng bộ. Bản mới
+cần Blaze và site key App Check; chỉ push Git hoặc deploy Rules chưa đủ.
 
 ## Cấu trúc
 

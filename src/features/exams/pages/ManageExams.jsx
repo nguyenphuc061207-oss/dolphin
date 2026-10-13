@@ -1,12 +1,13 @@
 import useDocumentTitle from '@/shared/hooks/useDocumentTitle';
 import AccountMenu from '@/shared/components/AccountMenu';
-import { securityLevel } from '../utils/examSecurity';
+import { securityLevel, allowsMobile, storedSecurity } from '../utils/examSecurity';
 import { withTimeout } from '@/shared/utils/runtimeSafety';
 import TeacherSidebar from '../components/TeacherSidebar';
 import ExamSecurityOptions from '../components/ExamSecurityOptions';
 import { useState, useEffect } from "react";
 import { db, auth } from "@/shared/config/firebase";
-import { collection, query, where, getDocs, deleteDoc, doc, updateDoc } from "firebase/firestore";
+import { collection, query, where, getDocs, doc, updateDoc } from "firebase/firestore";
+import { deleteExam, updateExamSettings } from '../services/examApi';
 import { useAuth } from "@/features/auth/hooks/useAuth";
 import { Link } from "react-router-dom";
 import { signOut } from "firebase/auth";
@@ -36,6 +37,7 @@ export default function ManageExams() {
     const [selectedExamForReview, setSelectedExamForReview] = useState(null);
     const [securityExam, setSecurityExam] = useState(null);
     const [securityChoice, setSecurityChoice] = useState('strict');
+    const [securityAllowMobile, setSecurityAllowMobile] = useState(false);
     const [savingSecurity, setSavingSecurity] = useState(false);
     const [securityError, setSecurityError] = useState('');
 
@@ -43,8 +45,9 @@ export default function ManageExams() {
         if (!securityExam || savingSecurity) return;
         setSavingSecurity(true); setSecurityError('');
         try {
-            await withTimeout(updateDoc(doc(db, 'exams', securityExam.id), { securityLevel: securityChoice, isAntiCheat: securityChoice === 'strict' }));
-            setExamsList(prev => prev.map(exam => exam.id === securityExam.id ? { ...exam, securityLevel: securityChoice, isAntiCheat: securityChoice === 'strict' } : exam));
+            const stored = storedSecurity(securityChoice, securityAllowMobile);
+            await withTimeout(updateDoc(doc(db, 'exams', securityExam.id), stored));
+            setExamsList(prev => prev.map(exam => exam.id === securityExam.id ? { ...exam, ...stored } : exam));
             setSecurityExam(null);
         } catch (error) { console.error(error); setSecurityError('Chưa xác nhận được thay đổi đã lưu. Hãy giữ lựa chọn và thử lưu lại.'); }
         finally { setSavingSecurity(false); }
@@ -82,7 +85,7 @@ export default function ManageExams() {
     const fetchExams = async () => {
         if (!currentUser) return;
         try {
-            const q = query(collection(db, "exams"), where("teacherId", "==", currentUser.uid));
+            const q = query(collection(db, "exams"), where("teacherId", "==", currentUser.uid), where('archived', '==', false));
             const querySnapshot = await getDocs(q);
             const exams = [];
             querySnapshot.forEach((doc) => exams.push({ id: doc.id, ...doc.data() }));
@@ -118,8 +121,8 @@ export default function ManageExams() {
     }, [currentUser]);
 
     const handleDeleteExam = async (id) => {
-        if (window.confirm("Bạn có chắc chắn muốn xóa vĩnh viễn đề thi này?")) {
-            await deleteDoc(doc(db, "exams", id));
+        if (window.confirm("Bạn có chắc chắn muốn gỡ đề thi này? Kết quả đã nộp vẫn được giữ lại.")) {
+            await deleteExam({ examId: id });
             fetchExams();
         }
     };
@@ -170,11 +173,10 @@ export default function ManageExams() {
         if (!selectedExamForAccess) return;
         setIsSavingAccess(true);
         try {
-            const examRef = doc(db, "exams", selectedExamForAccess.id);
-            await updateDoc(examRef, {
+            await updateExamSettings({ examId: selectedExamForAccess.id, settings: {
                 accessType: modalAccessType,
                 allowedUsers: modalAccessType === 'restricted' ? modalAllowedUsers : []
-            });
+            } });
             alert("Cập nhật quyền truy cập đề thi thành công!");
             setSelectedExamForAccess(null);
             fetchExams();
@@ -191,7 +193,9 @@ export default function ManageExams() {
         const mode = exam.reviewSettings?.mode || 'always';
         const time = exam.reviewSettings?.time || '';
         setModalReviewMode(mode);
-        setModalReviewTime(time);
+        const date = time ? new Date(time) : null;
+        setModalReviewTime(date && Number.isFinite(date.getTime())
+            ? new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '');
     };
 
     const handleSaveReviewSettings = async () => {
@@ -202,7 +206,7 @@ export default function ManageExams() {
             await updateDoc(examRef, {
                 reviewSettings: { 
                     mode: modalReviewMode, 
-                    time: modalReviewMode === 'after_time' ? modalReviewTime : null 
+                    time: modalReviewMode === 'after_time' ? new Date(modalReviewTime).toISOString() : null
                 }
             });
             alert("Cập nhật cấu hình xem lại bài thi thành công!");
@@ -394,7 +398,7 @@ export default function ManageExams() {
                                                                         <Eye className="w-4 h-4 text-gray-400" /> Chế độ xem lại bài thi
                                                                     </button>
 
-                                                                    <button onClick={() => { setSecurityExam(exam); setSecurityChoice(securityLevel(exam)); setSecurityError(''); }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-gray-700 hover:bg-blue-50 text-left">
+                                                                    <button onClick={() => { setSecurityExam(exam); setSecurityChoice(securityLevel(exam)); setSecurityAllowMobile(allowsMobile(exam)); setSecurityError(''); }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-gray-700 hover:bg-blue-50 text-left">
                                                                         <Shield className="w-4 h-4" /> Toàn màn hình & bảo mật
                                                                     </button>
 
@@ -683,7 +687,7 @@ export default function ManageExams() {
                 <div className="security-settings-dialog bg-white rounded-2xl p-6 max-w-lg w-full space-y-4">
                     <h2 id="security-settings-title" className="text-xl font-bold">Toàn màn hình & bảo mật</h2>
                     <p>{securityExam.title}</p>
-                    <ExamSecurityOptions value={securityChoice} onChange={setSecurityChoice} disabled={savingSecurity} existingExam />
+                    <ExamSecurityOptions value={securityChoice} onChange={setSecurityChoice} allowMobile={securityAllowMobile} onAllowMobileChange={setSecurityAllowMobile} disabled={savingSecurity} existingExam />
                     {securityError && <p role="alert" className="text-red-600">{securityError}</p>}
                     <div className="flex justify-end gap-3"><button disabled={savingSecurity} onClick={() => setSecurityExam(null)} className="border rounded-xl px-4 py-2">Hủy</button><button disabled={savingSecurity} onClick={saveSecurity} className="bg-blue-600 text-white rounded-xl px-4 py-2">{savingSecurity ? 'Đang lưu…' : 'Lưu thay đổi'}</button></div>
                 </div>

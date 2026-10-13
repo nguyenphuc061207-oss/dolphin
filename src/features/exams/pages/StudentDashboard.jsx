@@ -1,7 +1,8 @@
 import { withTimeout, timestampDate, timestampMillis, mapConcurrent } from '@/shared/utils/runtimeSafety';
 import { useState, useEffect } from "react";
 import { db } from "@/shared/config/firebase";
-import { collection, query, where, getDocs, doc, getDoc, updateDoc } from "firebase/firestore";
+import { collection, query, where, getDocs, doc, updateDoc } from "firebase/firestore";
+import { getExamInfo, finishExpiredAttempts } from '../services/examApi';
 import { useAuth } from "@/features/auth/hooks/useAuth";
 import { Link, useNavigate } from "react-router-dom";
 import { RefreshCw, Trash2, Search, ArrowRight, BookOpen, ClipboardPaste, FileText, LockKeyhole } from "lucide-react";
@@ -20,6 +21,7 @@ export default function StudentDashboard() {
   const [joinLoading, setJoinLoading] = useState(false);
   const [joinError, setJoinError] = useState('');
   const [historyQuery, setHistoryQuery] = useState('');
+  const [reloadKey, setReloadKey] = useState(0); // bumped when the server auto-submits an expired exam
   const pasteExamCode = async () => {
     try {
       const text = await navigator.clipboard.readText();
@@ -51,8 +53,8 @@ export default function StudentDashboard() {
     }
     setJoinLoading(true);
     try {
-      const examSnap = await withTimeout(getDoc(doc(db, "exams", examId)));
-      if (examSnap.exists()) {
+      const info = await getExamInfo({ examId });
+      if (info) {
         navigate(`/student/exam/${examId}`);
       } else {
         setJoinError("Không tìm thấy bài thi với mã này. Vui lòng kiểm tra lại.");
@@ -74,7 +76,8 @@ export default function StudentDashboard() {
         // 1. Fetch submissions
         const q = query(
           collection(db, "submissions"),
-          where("studentId", "==", currentUser.uid)
+          where("studentId", "==", currentUser.uid),
+          where("schemaVersion", "==", 2)
         );
         const querySnapshot = await withTimeout(getDocs(q));
         const rawSubs = [];
@@ -119,9 +122,9 @@ export default function StudentDashboard() {
         const configs = {};
         await mapConcurrent(uniqueExamIds.filter(Boolean), async (examId) => {
           try {
-            const examSnap = await withTimeout(getDoc(doc(db, 'exams', examId)));
-            if (examSnap.exists()) {
-              const data = examSnap.data();
+            const data = await getExamInfo({ examId });
+            if (data?.autoSubmitted && active) setReloadKey(k => k + 1);
+            if (data) {
               configs[examId] = { limit: data.attemptLimit ?? 0, reviewSettings: data.reviewSettings || { mode: 'always' }, attemptCount: rawSubs.filter(sub => sub.examId === examId).length };
             }
           } catch (error) {
@@ -141,6 +144,17 @@ export default function StudentDashboard() {
     };
 
     fetchData();
+    return () => { active = false; };
+  }, [currentUser, reloadKey]);
+
+  // Exams whose time ran out while the student was away are submitted by the server with
+  // the answers it saved; reload the history when that happened.
+  useEffect(() => {
+    if (!currentUser) return;
+    let active = true;
+    finishExpiredAttempts()
+      .then(({ closed }) => { if (active && closed?.length) setReloadKey(k => k + 1); })
+      .catch((error) => console.warn('Chưa tự nộp được bài hết giờ:', error.message));
     return () => { active = false; };
   }, [currentUser]);
 

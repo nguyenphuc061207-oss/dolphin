@@ -5,10 +5,12 @@ import { validateQuestions } from '../utils/examSafety';
 import { validateFlowSettings, MAX_PAGE_SIZE } from '../utils/examFlow';
 import TeacherSidebar from '../components/TeacherSidebar';
 import ExamSecurityOptions from '../components/ExamSecurityOptions';
+import { SECURITY_LEVELS, storedSecurity } from '../utils/examSecurity';
 import { useState, useEffect, useRef, useMemo } from "react";
 
 import { db } from "@/shared/config/firebase";
-import { collection, addDoc, serverTimestamp, query, where, getDocs, deleteDoc, doc, updateDoc } from "firebase/firestore";
+import { collection, query, where, getDocs, doc, updateDoc } from "firebase/firestore";
+import { publishExam, deleteExam, updateExamSettings } from '../services/examApi';
 import { useAuth } from "@/features/auth/hooks/useAuth";
 import { Link } from "react-router-dom";
 import { parseQuestionsFromHtml } from "../parsers/questionParser";
@@ -111,6 +113,7 @@ export default function TeacherDashboard() {
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
     const [examSecurityLevel, setExamSecurityLevel] = useState('strict');
+    const [examAllowMobile, setExamAllowMobile] = useState(false);
     const [examPassword, setExamPassword] = useState('');
     const [shuffleQuestions, setShuffleQuestions] = useState(true);
     const [shuffleOptions, setShuffleOptions] = useState(false);
@@ -190,19 +193,20 @@ export default function TeacherDashboard() {
         if (questions.length === 0 && !examTitle.trim()) return;
         const t = setTimeout(() => {
             try {
-                localStorage.setItem(draftKey, JSON.stringify({ examTitle, duration, questions, securityLevel: examSecurityLevel, savedAt: Date.now() }));
+                localStorage.setItem(draftKey, JSON.stringify({ examTitle, duration, questions, securityLevel: examSecurityLevel, allowMobile: examAllowMobile, savedAt: Date.now() }));
                 setDraftSavedAt(Date.now());
             } catch { setDraftSavedAt(null); } // quá dung lượng (ảnh base64) → bỏ qua
         }, 800);
         return () => clearTimeout(t);
-    }, [draftKey, draftOffer, examTitle, duration, questions, examSecurityLevel]);
+    }, [draftKey, draftOffer, examTitle, duration, questions, examSecurityLevel, examAllowMobile]);
 
     const restoreDraft = () => {
         if (!draftOffer) return;
         setExamTitle(draftOffer.examTitle || '');
         setDuration(draftOffer.duration || 45);
         setQuestions(Array.isArray(draftOffer.questions) ? draftOffer.questions : []);
-        setExamSecurityLevel(['off', 'normal', 'strict'].includes(draftOffer.securityLevel) ? draftOffer.securityLevel : 'strict');
+        setExamSecurityLevel(SECURITY_LEVELS.includes(draftOffer.securityLevel) ? draftOffer.securityLevel : 'strict');
+        setExamAllowMobile(draftOffer.allowMobile === true || draftOffer.securityLevel === 'mobile');
         setDraftOffer(null);
     };
     const discardDraft = () => {
@@ -234,7 +238,7 @@ export default function TeacherDashboard() {
     const handleDeleteExam = async (id) => {
         if (window.confirm("Bạn có chắc chắn muốn xóa đề thi này?")) {
             try {
-                await deleteDoc(doc(db, "exams", id));
+                await deleteExam({ examId: id });
                 fetchExams();
             } catch (error) {
                 console.error("Lỗi khi xóa đề thi:", error);
@@ -246,7 +250,7 @@ export default function TeacherDashboard() {
     const fetchExams = async () => {
         if (!currentUser) return;
         try {
-            const q = query(collection(db, "exams"), where("teacherId", "==", currentUser.uid));
+            const q = query(collection(db, "exams"), where("teacherId", "==", currentUser.uid), where('archived', '==', false));
             const querySnapshot = await getDocs(q);
             const exams = [];
             querySnapshot.forEach((doc) => exams.push({ id: doc.id, ...doc.data() }));
@@ -296,7 +300,7 @@ export default function TeacherDashboard() {
             const limitExamIds = myExamIds.slice(0, 30);
             // Each query checks one exam owner, within Firestore Rules' access limit.
             const subSnaps = await mapConcurrent(limitExamIds, examId => getDocs(query(
-                collection(db, "submissions"), where("examId", "==", examId)
+                collection(db, "submissions"), where("examId", "==", examId), where("teacherId", "==", currentUser.uid), where("schemaVersion", "==", 2)
             )));
             const list = [];
             subSnaps.forEach(subSnap => subSnap.forEach((docSnap) => {
@@ -417,11 +421,10 @@ export default function TeacherDashboard() {
         if (!selectedExamForAccess) return;
         setIsSavingAccess(true);
         try {
-            const examRef = doc(db, "exams", selectedExamForAccess.id);
-            await updateDoc(examRef, {
+            await updateExamSettings({ examId: selectedExamForAccess.id, settings: {
                 accessType: modalAccessType,
                 allowedUsers: modalAccessType === 'restricted' ? modalAllowedUsers : []
-            });
+            } });
             alert("Cập nhật quyền truy cập đề thi thành công!");
             setSelectedExamForAccess(null);
             fetchExams();
@@ -806,17 +809,16 @@ const handleSaveExam = async () => {
         validateQuestions(questions);
         const { questions: finalQuestions, imageDeleteUrls } = await uploadAllImagesInQuestions(questions.map(normalizeQuestionExplanation));
 
-        await addDoc(collection(db, "exams"), {
+        await publishExam({
             teacherId: currentUser.uid,
             teacherName: currentUser.displayName || "Giáo viên",
             title: examTitle,
             duration: Number(duration),
             questions: finalQuestions,
             imageDeleteUrls,
-            startDate: startDate || null,
-            endDate: endDate || null,
-            securityLevel: examSecurityLevel,
-            isAntiCheat: examSecurityLevel === 'strict',
+            startDate: startDate ? new Date(startDate).toISOString() : null,
+            endDate: endDate ? new Date(endDate).toISOString() : null,
+            ...storedSecurity(examSecurityLevel, examAllowMobile),
             password: examPassword.trim() || null,
             shuffleQuestions,
             shuffleOptions,
@@ -829,8 +831,7 @@ const handleSaveExam = async () => {
             mathDictionary: mathDictionary || {},
             accessType,
             allowedUsers: accessType === 'restricted' ? allowedUsers : [],
-            reviewSettings: { mode: reviewMode, time: reviewMode === 'after_time' ? reviewTime : null },
-            createdAt: serverTimestamp()
+            reviewSettings: { mode: reviewMode, time: reviewMode === 'after_time' ? new Date(reviewTime).toISOString() : null },
         });
         alert("Xuất bản đề thi thành công!");
         setExamTitle(""); setQuestions([]); setExamPassword('');
@@ -1559,7 +1560,7 @@ return (
                                             </div>
                                         </div>
                                         <div className="pt-2">
-                                            <ExamSecurityOptions value={examSecurityLevel} onChange={setExamSecurityLevel} />
+                                            <ExamSecurityOptions value={examSecurityLevel} onChange={setExamSecurityLevel} allowMobile={examAllowMobile} onAllowMobileChange={setExamAllowMobile} />
                                         </div>
                                     </div>
                                 </details>

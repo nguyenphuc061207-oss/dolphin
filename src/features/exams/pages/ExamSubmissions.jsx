@@ -1,6 +1,12 @@
 import { withTimeout, timestampDate, timestampMillis } from '@/shared/utils/runtimeSafety';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import { ownsExam, accessErrorMessage } from '../utils/examAccess';
+import { finishExpiredAttempts } from '../services/examApi';
+import { VIOLATION_LABELS, formatAway, normalizeViolations } from '../utils/examSecurity';
+
+/** "Rời trang bài thi · 45 giây" for each recorded violation */
+const violationLines = (sub) => normalizeViolations(sub.violations)
+    .map(v => `${VIOLATION_LABELS[v.code]} · ${v.awayMs == null ? 'không rõ thời gian' : formatAway(v.awayMs)}`);
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { db } from "@/shared/config/firebase";
@@ -42,10 +48,16 @@ export default function ExamSubmissions() {
             const examData = examSnap.data();
             if (!ownsExam(currentUser.uid, examData)) throw new Error('Bạn không có quyền xem danh sách bài nộp của đề thi này.');
             if (request !== fetchGeneration.current) return;
+            // Attempts whose time ran out without the student coming back are submitted now,
+            // with the answers saved on the server, so they appear in the list below.
+            try { await withTimeout(finishExpiredAttempts({ examId })); } catch (error) { console.warn('Chưa tự nộp được bài hết giờ:', error.message); }
+            if (request !== fetchGeneration.current) return;
 
             const q = query(
                 collection(db, "submissions"),
-                where("examId", "==", examId)
+                where("examId", "==", examId),
+          where("teacherId", "==", currentUser.uid),
+          where("schemaVersion", "==", 2)
             );
 
             const querySnapshot = await withTimeout(getDocsFromServer(q));
@@ -118,7 +130,8 @@ export default function ExamSubmissions() {
             ];
 
             if (exam?.isAntiCheat) {
-                const status = sub.cheatCount > 0 ? `Vi pham thoat tab ${sub.cheatCount} lan` : "Hop le";
+                const details = violationLines(sub);
+                const status = sub.cheatCount > 0 ? `Vi pham thoat tab ${sub.cheatCount} lan${details.length ? `: ${details.join('; ')}` : ''}` : "Hop le";
                 rowData.push(`"${status}"`);
             }
 
@@ -224,9 +237,19 @@ export default function ExamSubmissions() {
                                     {exam?.isAntiCheat && (
                                         <td data-label="Giám sát" className="p-4">
                                             {sub.cheatCount > 0 ? (
-                                                <span className="px-2 py-1 bg-red-100 text-red-700 font-semibold rounded text-sm whitespace-nowrap">
-                                                    ⚠️ Thoát tab {sub.cheatCount} lần
-                                                </span>
+                                                <div className="flex flex-col items-start gap-1">
+                                                    <span className="px-2 py-1 bg-red-100 text-red-700 font-semibold rounded text-sm whitespace-nowrap">
+                                                        ⚠️ Thoát tab {sub.cheatCount} lần
+                                                    </span>
+                                                    {violationLines(sub).length > 0 && (
+                                                        <details className="text-xs text-gray-600">
+                                                            <summary className="cursor-pointer text-red-700">Xem lý do và thời gian rời</summary>
+                                                            <ol className="list-decimal pl-5 mt-1 space-y-0.5">
+                                                                {violationLines(sub).map((line, i) => <li key={i}>{line}</li>)}
+                                                            </ol>
+                                                        </details>
+                                                    )}
+                                                </div>
                                             ) : (
                                                 <span className="px-2 py-1 bg-green-100 text-green-700 font-semibold rounded text-sm">
                                                     ✅ Hợp lệ
@@ -236,6 +259,7 @@ export default function ExamSubmissions() {
                                     )}
                                     <td data-label="Thời gian nộp" className="p-4 text-sm text-gray-500">
                                         {timestampDate(sub.submittedAt)?.toLocaleString("vi-VN") || "Không xác định"}
+                                        {sub.autoSubmitted && <span className="block text-xs text-amber-700" title="Học sinh không nộp trước khi hết giờ; hệ thống nộp các câu trả lời đã lưu.">Tự động nộp (hết giờ)</span>}
                                     </td>
                                     <td data-label="Thao tác" className="p-4 text-right flex items-center justify-end gap-2">
                                         <Link 

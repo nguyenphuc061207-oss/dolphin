@@ -1,44 +1,47 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() {
-      return request.auth != null;
+    function signedIn() { return request.auth != null; }
+    function writable() {
+      return !exists(/databases/$(database)/documents/securityConfig/exams) ||
+        get(/databases/$(database)/documents/securityConfig/exams).data.maintenance != true;
     }
-
-    function ownsExam(examId) {
-      return signedIn() &&
-        get(/databases/$(database)/documents/exams/$(examId)).data.teacherId == request.auth.uid;
-    }
-
     match /exams/{examId} {
-      // Authenticated students still need the exam to join and review their work.
-      allow read: if signedIn();
-      allow create: if signedIn() && request.resource.data.teacherId == request.auth.uid;
-      allow update: if signedIn() && resource.data.teacherId == request.auth.uid &&
-        request.resource.data.teacherId == resource.data.teacherId;
-      allow delete: if signedIn() && resource.data.teacherId == request.auth.uid;
+      allow read: if signedIn() && resource.data.teacherId == request.auth.uid;
+      allow update: if signedIn() && writable() && resource.data.teacherId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['duration', 'securityLevel', 'isAntiCheat', 'allowMobile', 'reviewSettings']) &&
+        request.resource.data.duration is number && request.resource.data.duration > 0 && request.resource.data.duration <= 1440;
     }
-
     match /submissions/{submissionId} {
-      allow read: if signedIn() &&
-        (resource.data.get('studentId', '') == request.auth.uid || ownsExam(resource.data.examId));
-      allow create: if signedIn() && request.resource.data.studentId == request.auth.uid &&
-        exists(/databases/$(database)/documents/exams/$(request.resource.data.examId));
-      allow update: if signedIn() &&
-        request.resource.data.get('studentId', '') == resource.data.get('studentId', '') &&
-        request.resource.data.examId == resource.data.examId &&
-        (ownsExam(resource.data.examId) ||
-          (resource.data.get('studentId', '') == request.auth.uid &&
-            // Hide history, or retry the identical frozen submission payload.
-            (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletedByStudent']) ||
-              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['submittedAt']))));
-      allow delete: if ownsExam(resource.data.examId);
+      // Legacy documents carrying answer keys must be migrated before client access.
+      allow read: if signedIn() && resource.data.schemaVersion == 2 &&
+        (resource.data.get('studentId', '') == request.auth.uid || resource.data.teacherId == request.auth.uid);
+      allow update: if signedIn() && writable() && resource.data.studentId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletedByStudent']) && request.resource.data.deletedByStudent is bool;
+      allow delete: if signedIn() && writable() && resource.data.teacherId == request.auth.uid;
     }
-
-    // Preserve the existing policy for other features. This must never match
-    // exams/submissions: overlapping allow rules are combined with OR.
-    match /{collection}/{document=**} {
-      allow read, write: if signedIn() && collection != 'exams' && collection != 'submissions';
+    // No client access to examSecrets, submissionSecrets, attempts, counters or apiLimits.
+    // Admin SDK bypasses Rules; backend APIs must verify every caller explicitly.
+    match /users/{userId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && userId == request.auth.uid && request.resource.data.uid == userId &&
+        request.resource.data.role == 'student' &&
+        request.resource.data.keys().hasOnly(['uid', 'email', 'displayName', 'shortId', 'role', 'createdAt']);
+      allow update: if signedIn() && userId == request.auth.uid && !('shortId' in resource.data) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['shortId']);
+    }
+    match /friendRequests/{requestId} {
+      allow read, delete: if signedIn() && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.fromUid == request.auth.uid &&
+        request.resource.data.toUid != request.auth.uid && request.resource.data.status == 'pending';
+    }
+    match /friendships/{friendshipId} {
+      allow read, delete: if signedIn() && (resource.data.userId == request.auth.uid || resource.data.friendId == request.auth.uid);
+      allow create: if signedIn() &&
+        get(/databases/$(database)/documents/friendRequests/$(request.resource.data.requestId)).data.toUid == request.auth.uid &&
+        get(/databases/$(database)/documents/friendRequests/$(request.resource.data.requestId)).data.status == 'pending' &&
+        ((request.resource.data.userId == request.auth.uid && request.resource.data.friendId == get(/databases/$(database)/documents/friendRequests/$(request.resource.data.requestId)).data.fromUid) ||
+        (request.resource.data.friendId == request.auth.uid && request.resource.data.userId == get(/databases/$(database)/documents/friendRequests/$(request.resource.data.requestId)).data.fromUid));
     }
   }
 }

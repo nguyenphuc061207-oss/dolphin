@@ -1,12 +1,11 @@
 import QuestionExplanation from '../components/QuestionExplanation';
 import { useAuth } from '@/features/auth/hooks/useAuth';
-import { withTimeout, timestampMillis } from '@/shared/utils/runtimeSafety';
+import { withTimeout } from '@/shared/utils/runtimeSafety';
 import { validateQuestions } from '../utils/examSafety';
-import { ownsExam, canReviewSubmission, accessErrorMessage } from '../utils/examAccess';
+import { ownsExam, accessErrorMessage } from '../utils/examAccess';
 import { useState, useEffect } from "react";
 import { useParams, Link, useLocation, useNavigate } from "react-router-dom";
-import { db } from "@/shared/config/firebase";
-import { doc, getDocFromServer } from "firebase/firestore";
+import { getReview } from '../services/examApi';
 import { AlertTriangle, CheckCircle2, XCircle, PenLine } from "lucide-react";
 import RichTextRenderer from "@/shared/components/RichTextRenderer";
 
@@ -88,19 +87,9 @@ export default function ReviewExam() {
             setLoading(true); setSubmission(null); setExamInfo(null); setLoadError(''); setIsReviewLocked(true);
             try {
                 if (!currentUser?.uid) throw new Error('Vui lòng đăng nhập để xem bài làm.');
-                const subSnap = await withTimeout(getDocFromServer(doc(db, 'submissions', submissionId)));
-                if (!subSnap.exists()) throw new Error('Không tìm thấy bài làm.');
-                const data = subSnap.data();
-                const examSnap = await withTimeout(getDocFromServer(doc(db, 'exams', data.examId)));
-                if (!examSnap.exists()) throw new Error('Không xác nhận được quyền xem vì đề thi không còn tồn tại.');
-                const info = examSnap.data();
-                const isOwner = ownsExam(currentUser.uid, info);
-                if (!canReviewSubmission(currentUser.uid, data, info)) throw new Error('Bạn không có quyền xem bài làm này.');
-                const rs = info.reviewSettings || { mode: 'always' };
-                const openTime = timestampMillis(rs.time);
-                const locked = !isOwner && (rs.mode === 'never' || (rs.mode === 'after_time' && (!openTime || Date.now() < openTime)));
+                const { submission: data, exam: info, locked } = await withTimeout(getReview({ submissionId }));
                 if (!locked) validateQuestions(data.examSnapshot);
-                if (!data.answers || typeof data.answers !== 'object') throw new Error('Bài làm thiếu dữ liệu câu trả lời.');
+                if (!locked && (!data.answers || typeof data.answers !== 'object')) throw new Error('Bài làm thiếu dữ liệu câu trả lời.');
                 if (!active) return;
                 setExamInfo(info); setIsReviewLocked(locked); setSubmission(data);
             } catch (error) {
@@ -119,13 +108,13 @@ export default function ReviewExam() {
         </div>
     );
 
-    if (!submission || !Array.isArray(submission.examSnapshot)) return (
+    if (!submission || (!isReviewLocked && !Array.isArray(submission.examSnapshot))) return (
         <div className="min-h-screen bg-[#f8fafc] flex flex-col items-center justify-center p-6 text-center">
             <AlertTriangle className="w-16 h-16 text-amber-500 mb-4" />
             <h2 className="text-2xl font-bold text-gray-900">Không hỗ trợ xem chi tiết</h2>
             <p className="text-gray-500 max-w-md mt-2">{loadError || 'Bài làm này thuộc phiên bản cũ hoặc dữ liệu không đầy đủ, không hỗ trợ xem chi tiết từng câu.'}</p>
             <Link to={backFallback} onClick={goBack} className="mt-6 px-6 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-200">
-                {backLabel}
+                Quay về
             </Link>
         </div>
     );

@@ -2,6 +2,7 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
 
 // Thay thế block này bằng cấu hình thực tế từ Firebase Console của bạn
 const firebaseConfig = {
@@ -16,6 +17,13 @@ const firebaseConfig = {
 
 // Khởi tạo Firebase
 const app = initializeApp(firebaseConfig);
+// The exam API on Vercel verifies this token; null when no site key is configured.
+export const appCheck = import.meta.env.VITE_APPCHECK_SITE_KEY
+    ? initializeAppCheck(app, {
+        provider: new ReCaptchaEnterpriseProvider(import.meta.env.VITE_APPCHECK_SITE_KEY),
+        isTokenAutoRefreshEnabled: true,
+    })
+    : null;
 
 // Khởi tạo và export các dịch vụ để sử dụng sau này
 export const auth = getAuth(app);

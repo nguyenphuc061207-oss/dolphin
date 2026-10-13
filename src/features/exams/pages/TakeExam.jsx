@@ -1,9 +1,7 @@
 import useExamSecurity from '../hooks/useExamSecurity';
-import { securityLevel, requiresScreenVerification } from '../utils/examSecurity';
+import { securityLevel, allowsMobile, effectiveMode, isMonitoredLevel, normalizeViolations } from '../utils/examSecurity';
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { db } from "@/shared/config/firebase";
-import { doc, getDoc, setDoc, collection, serverTimestamp, query, where, getDocs } from "firebase/firestore";
 import { useAuth } from "@/features/auth/hooks/useAuth";
 import RichTextRenderer from "@/shared/components/RichTextRenderer";
 import useDocumentTitle from "@/shared/hooks/useDocumentTitle";
@@ -29,9 +27,10 @@ import {
   Shield,
 } from "lucide-react";
 
-import { withTimeout, storageOperation } from '@/shared/utils/runtimeSafety';
-import { gradeExam, validateQuestions } from '../utils/examSafety';
-import { readExamProgress } from '../utils/examProgress';
+import { storageOperation } from '@/shared/utils/runtimeSafety';
+import { validateQuestions } from '../utils/examSafety';
+import { getExamInfo, startAttempt, saveAnswers, submitAttempt } from '../services/examApi';
+import { readExamProgress, removeExamProgress } from '../utils/examProgress';
 import { normalizeFlow, pageOf, pageStart, pageEnd, describeFlow } from '../utils/examFlow';
 
 // ── Helpers ──────────────────────────────────────────────
@@ -85,10 +84,13 @@ export default function TakeExam() {
   const [submissionAttempted, setSubmissionAttempted] = useState(false);
   const [savedProgress, setSavedProgress] = useState(null);
   const [progressError, setProgressError] = useState('');
+  const [legacyBackup, setLegacyBackup] = useState(null);
+  const [autoSubmitted, setAutoSubmitted] = useState(null); // previous attempt submitted by the server when its time ran out
   const [deadline, setDeadline] = useState(null);
   const [userAnswers, setUserAnswers] = useState({});
   const [timeLeft, setTimeLeft] = useState(0);
   const [cheatCount, setCheatCount] = useState(0);
+  const [violations, setViolations] = useState([]); // [{ code, at, awayMs }] sent with the attempt
   const [flaggedQuestions, setFlaggedQuestions] = useState(new Set());
   const [submissionCount, setSubmissionCount] = useState(0);
   const [hasStarted, setHasStarted] = useState(false);
@@ -99,6 +101,7 @@ export default function TakeExam() {
   const [isGridOpen, setIsGridOpen] = useState(false);
   const [securityMessage, setSecurityMessage] = useState('');
   const [starting, setStarting] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
   const [showConfirmExit, setShowConfirmExit] = useState(false);
   const [page, setPage] = useState(0);         // current page (examFlow)
@@ -114,20 +117,49 @@ export default function TakeExam() {
   const payloadRef = useRef(null);
   const autoSubmittedRef = useRef(false);
   const saveProgressRef = useRef(null);
+  const revisionRef = useRef(0);
+  const serverOffsetRef = useRef(0);
+  const [syncMessage, setSyncMessage] = useState('');
 
   const level = securityLevel(exam);
-  const fullscreenRequired = level !== 'off';
-  const screenVerificationRequired = requiresScreenVerification(level);
-  const onViolation = useCallback(reason => {
-    if (isSubmittingRef.current) return;
-    setCheatCount(v => v + 1); setIsInterrupted(true); setSecurityMessage(reason);
-  }, []);
-  const security = useExamSecurity(level, hasStarted, onViolation);
+  const mode = effectiveMode(level, allowsMobile(exam));
+  const monitored = isMonitoredLevel(mode);
+
+  // Violations are written to the device synchronously: a phone may suspend or close
+  // the tab right after the page is hidden, before React renders again.
+  const violationsRef = useRef([]);
+  const violationsKey = `exam_violations_${examId}_${currentUser?.uid || 'anonymous'}`;
+  const storeViolations = useCallback((list) => {
+    violationsRef.current = list;
+    setViolations(list);
+    storageOperation('setItem', violationsKey, JSON.stringify({ attemptId: attemptIdRef.current, list }));
+  }, [violationsKey]);
+  const report = useMemo(() => ({
+    violation(record) {
+      if (isSubmittingRef.current) return;
+      storeViolations([...violationsRef.current, { code: record.code, at: record.at, awayMs: null }]);
+      setCheatCount(v => v + 1); setIsInterrupted(true); setSecurityMessage(record.message);
+    },
+    update(patch) {
+      const list = violationsRef.current;
+      if (!list.length) return;
+      const last = { ...list[list.length - 1] };
+      if (patch.code) last.code = patch.code;
+      if ('awayMs' in patch) last.awayMs = patch.awayMs;
+      storeViolations([...list.slice(0, -1), last]);
+      if (patch.message) setSecurityMessage(patch.message);
+    },
+  }), [storeViolations]);
+  const security = useExamSecurity(mode, hasStarted, report);
+  const { profile } = security;
+  // Cấp 1 always needs fullscreen; the phone level only where the device has it (not iPhone).
+  const fullscreenRequired = level === 'normal' || (monitored && profile.fullscreen);
+  const screenVerificationRequired = profile.screens;
   const startInFlightRef = useRef(false);
 
   // Anti-cheat: DevTools Console self-XSS warning
   useEffect(() => {
-    if (level !== 'strict') return;
+    if (!monitored) return;
     const warningTitle = "⚠️ DỪNG LẠI!";
     const warningTitleStyle = "color: #ff0000; font-size: 40px; font-weight: 800; font-family: sans-serif; text-shadow: 2px 2px 0px #000; padding: 10px;";
     
@@ -139,7 +171,7 @@ export default function TakeExam() {
     console.log(`%c${warningTitle}`, warningTitleStyle);
     console.log(`%c${warningDesc}`, warningDescStyle);
     console.log(`%c👉 MỌI HÀNH VI GIAN LẬN SẼ BỊ HỆ THỐNG GHI LẠI VÀ BÁO CÁO CHO GIÁO VIÊN!`, alertStyle);
-  }, [level]);
+  }, [monitored]);
 
   // Fetch exam
   useEffect(() => {
@@ -147,71 +179,42 @@ export default function TakeExam() {
     const fetchExam = async () => {
       setLoading(true); setLoadError(''); setExam(null);
       setSavedProgress(null); setProgressError('');
+      setLegacyBackup(null);
       setHasStarted(false); setUserAnswers({}); setSubmissionAttempted(false); setSubmitting(false); setPage(0); setMaxPage(0); setShowConfirmNext(false);
-      setCheatCount(0); setDeadline(null); setSubmissionCount(0); setStorageWarning('');
+      setCheatCount(0); violationsRef.current = []; setViolations([]); setDeadline(null); setSubmissionCount(0); setStorageWarning(''); setAutoSubmitted(null);
       attemptIdRef.current = null; payloadRef.current = null; isSubmittingRef.current = false; autoSubmittedRef.current = false;
       try {
-        const docSnap = await withTimeout(getDoc(doc(db, "exams", examId)));
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          validateQuestions(data.questions);
-          if (!Number.isFinite(Number(data.duration)) || Number(data.duration) <= 0) throw new Error('Thời lượng đề thi không hợp lệ.');
-          let questions = [...data.questions];
-          if (data.shuffleQuestions) questions.sort(() => Math.random() - 0.5);
-          if (data.shuffleOptions) {
-            questions = questions.map((q) => {
-              if (!q.options || q.options.length === 0) return q;
-              const indexed = q.options.map((opt, i) => ({ text: opt, orig: i }));
-              indexed.sort(() => Math.random() - 0.5);
-              
-              let newCorrectAnswer = q.correctAnswer;
-              const qType = q.type || 'single';
-              
-              if (qType === 'multi_true_false' || (Array.isArray(q.correctAnswer) && q.correctAnswer.every(val => typeof val === 'boolean'))) {
-                newCorrectAnswer = indexed.map(o => q.correctAnswer[o.orig] ?? false);
-              } else if (qType === 'multiple' || Array.isArray(q.correctAnswer)) {
-                const caArray = Array.isArray(q.correctAnswer) ? q.correctAnswer : (q.correctAnswer !== undefined && q.correctAnswer !== null && q.correctAnswer !== '' ? [q.correctAnswer] : []);
-                newCorrectAnswer = caArray
-                  .map(origIdx => indexed.findIndex(o => o.orig === Number(origIdx)))
-                  .filter(idx => idx >= 0);
-              } else if (q.correctAnswer !== undefined && q.correctAnswer !== null && q.correctAnswer !== '') {
-                newCorrectAnswer = indexed.findIndex((o) => o.orig === Number(q.correctAnswer));
-              }
-
-              return {
-                ...q,
-                options: indexed.map((o) => o.text),
-                correctAnswer: newCorrectAnswer,
-              };
-            });
+        const data = await getExamInfo({ examId });
+        if (!active) return;
+        const session = data.activeAttempt;
+        setSubmissionCount(data.submissionCount);
+        setAutoSubmitted(data.autoSubmitted || null);
+        setSavedProgress(session);
+        setExam({ ...data, questions: session?.exam.questions || [] });
+        setTimeLeft(Number(data.duration) * 60);
+        if (session?.studentName) setStudentManualName(session.studentName);
+        // Sanitize any legacy local snapshot, retaining answers for recovery.
+        try {
+          let local = readExamProgress(examId, currentUser.uid, data.duration * 60);
+          // The server just submitted this attempt (time ran out): nothing left to recover.
+          if (local && data.autoSubmitted && local.attemptId === data.autoSubmitted.submissionId) {
+            try { removeExamProgress(examId, currentUser.uid); } catch { /* storage unavailable: nothing to clean */ }
+            local = null;
           }
-          
-          if (currentUser) {
-            const subQuery = query(collection(db, "submissions"), where("examId", "==", examId), where("studentId", "==", currentUser.uid));
-            const subSnap = await withTimeout(getDocs(subQuery));
-            if (active) {
-              setSubmissionCount(subSnap.size);
-              try {
-                const saved = readExamProgress(examId, currentUser.uid, data.duration * 60);
-                if (saved?.attemptId && subSnap.docs.some(sub => sub.id === saved.attemptId)) {
-                  storageOperation('removeItem', `exam_progress_${examId}_${currentUser.uid}`);
-                } else if (saved) {
-                  setSavedProgress(saved);
-                  if (saved.studentName) setStudentManualName(saved.studentName);
-                }
-              } catch {
-                setProgressError('Không đọc được bản lưu bài thi. Hãy thử tải lại hoặc liên hệ giáo viên để tránh mất câu trả lời.');
-              }
+          if (local) {
+            storageOperation('setItem', `exam_progress_${examId}_${currentUser.uid}`, JSON.stringify(local));
+            if (!session || local.attemptId !== session.attemptId) {
+              const backup = { userAnswers: local.userAnswers, examSnapshot: local.examSnapshot };
+              const archived = storageOperation('setItem', `exam_legacy_progress_${examId}_${currentUser.uid}`, JSON.stringify(backup));
+              if (!archived.ok) throw new Error('Không lưu được bản sao bài cũ.');
+              setLegacyBackup(backup);
+              storageOperation('removeItem', `exam_progress_${examId}_${currentUser.uid}`);
+              setStorageWarning('Bản làm chưa xong cũ đã được giữ lại trên thiết bị. Lượt mới dùng hạn giờ và dữ liệu do máy chủ xác nhận.');
             }
           }
-          if (!active) return;
-          setExam({ ...data, questions });
-          setTimeLeft(Number(data.duration) * 60);
-        } else {
-          if (!active) return;
-          alert("Không tìm thấy đề thi!");
-          navigate("/student");
-        }
+          const legacy = storageOperation('getItem', `exam_legacy_progress_${examId}_${currentUser.uid}`);
+          if (legacy.ok && legacy.value) setLegacyBackup(JSON.parse(legacy.value));
+        } catch { setProgressError('Không đọc được bản lưu trên thiết bị. Hãy liên hệ giáo viên trước khi bắt đầu lượt mới.'); }
       } catch (e) {
         console.error(e);
         if (active) setLoadError(e.message || 'Không tải được đề thi.');
@@ -225,7 +228,7 @@ export default function TakeExam() {
 
   // Anti-cheat: Prevent Copy/Paste/ContextMenu/Shortcuts
   useEffect(() => {
-    if (!hasStarted || level !== 'strict') return;
+    if (!hasStarted || !monitored) return;
     const preventDefault = (e) => e.preventDefault();
     const handleKeyDown = (e) => {
       // F12, Ctrl+Shift+I/J/C, Ctrl+U/S/C/V/X
@@ -249,7 +252,7 @@ export default function TakeExam() {
       document.removeEventListener("paste", preventDefault);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [hasStarted, level]);
+  }, [hasStarted, monitored]);
 
   // Fullscreen
   const enterFullScreen = useCallback(async () => {
@@ -290,16 +293,28 @@ export default function TakeExam() {
     };
   }, [userAnswers, deadline, cheatCount, hasStarted, examId, currentUser?.uid, exam, submissionAttempted, submitting, page, maxPage, studentManualName, flaggedQuestions]);
 
+  useEffect(() => {
+    if (!hasStarted || !attemptIdRef.current || submissionAttempted || submitting) return;
+    const revision = ++revisionRef.current;
+    const timer = setTimeout(() => {
+      saveAnswers({ attemptId: attemptIdRef.current, answers: userAnswers, revision, page, maxPage, cheatCount, violations })
+        .then(() => setSyncMessage('Đã lưu câu trả lời trên máy chủ.'))
+        .catch(error => setSyncMessage(error.code === 'functions/failed-precondition'
+          ? 'Lượt thi đã hết giờ hoặc đã nộp.' : 'Chưa đồng bộ được câu trả lời. Kiểm tra kết nối rồi thử nộp lại.'));
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [hasStarted, userAnswers, page, maxPage, cheatCount, violations, submissionAttempted, submitting]);
+
   const handleResume = async () => {
-    if (security.inspect() !== 'single') { setSecurityMessage('Hãy ngắt màn hình phụ và kiểm tra lại màn hình trước khi tiếp tục.'); return; }
-    if (!await enterFullScreen()) return;
+    if (profile.screens && security.inspect() !== 'single') { setSecurityMessage('Hãy ngắt màn hình phụ và kiểm tra lại màn hình trước khi tiếp tục.'); return; }
+    if (profile.fullscreen && !await enterFullScreen()) return;
     if (security.resume()) { setIsInterrupted(false); setSecurityMessage(''); }
   };
 
   const handleSelectAnswer = (qi, oi, type, val) => {
     // Wall-clock reads run only on input events, never during rendering.
     // eslint-disable-next-line react-hooks/purity
-    if (isSubmittingRef.current || submissionAttempted || timeLeft <= 0 || Date.now() >= deadline || (level === 'strict' && (isInterrupted || document.hidden || !document.hasFocus() || !document.fullscreenElement || security.inspect() !== 'single'))) return;
+    if (isSubmittingRef.current || submissionAttempted || timeLeft <= 0 || Date.now() + serverOffsetRef.current >= deadline || (monitored && (isInterrupted || security.blocked()))) return;
     setUserAnswers((p) => {
       if (type === 'multiple') {
         return { ...p, [qi]: toggleMultiple(p[qi], oi) };
@@ -314,7 +329,7 @@ export default function TakeExam() {
 
   const handleEssayChange = (qi, text) => {
     // eslint-disable-next-line react-hooks/purity
-    if (isSubmittingRef.current || submissionAttempted || timeLeft <= 0 || Date.now() >= deadline || (level === 'strict' && (isInterrupted || document.hidden || !document.hasFocus() || !document.fullscreenElement || security.inspect() !== 'single'))) return;
+    if (isSubmittingRef.current || submissionAttempted || timeLeft <= 0 || Date.now() + serverOffsetRef.current >= deadline || (monitored && (isInterrupted || security.blocked()))) return;
     setUserAnswers((p) => ({ ...p, [qi]: text }));
   };
 
@@ -401,38 +416,23 @@ export default function TakeExam() {
     setSubmitting(true);
     setSubmissionAttempted(true);
     try {
-      const { correct, score, gradable } = gradeExam(exam.questions, userAnswers);
-      const total = exam.questions.length;
-      attemptIdRef.current ||= doc(collection(db, 'submissions')).id;
-      // Freeze the first payload: retries after a timeout update the same attempt.
-      payloadRef.current ||= {
-
-        examId, examTitle: exam.title, studentId: currentUser.uid,
-        studentName: studentManualName || currentUser.displayName || "Thí sinh ẩn danh",
-        shortId: currentUser.shortId || "N/A",
-        answers: userAnswers,
-        score: Number(score), correctCount: correct, totalQuestions: total,
-        cheatCount, securityLevel: level, examSnapshot: exam.questions,
-        mathDictionary: exam.mathDictionary || {},
-        submittedAt: serverTimestamp(),
-        attemptNumber: submissionCount + 1,
-      };
+      payloadRef.current ||= { attemptId: attemptIdRef.current, answers: userAnswers };
       const backup = storageOperation('setItem', `exam_progress_${examId}_${currentUser.uid}`, JSON.stringify({
-        userAnswers: payloadRef.current.answers, deadline, cheatCount, examSnapshot: payloadRef.current.examSnapshot,
-        attemptId: attemptIdRef.current, submissionAttempted: true,
-        examId, studentId: currentUser.uid, examTitle: exam.title, studentName: studentManualName,
-        examFlow: exam.examFlow || null, mathDictionary: exam.mathDictionary || {},
-        page, maxPage, flaggedQuestions: [...flaggedQuestions], savedAt: Date.now(),
+        userAnswers: payloadRef.current.answers, deadline, cheatCount, examSnapshot: exam.questions,
+        attemptId: attemptIdRef.current, submissionAttempted: true, examId, studentId: currentUser.uid,
+        examTitle: exam.title, studentName: studentManualName, examFlow: exam.examFlow || null,
+        mathDictionary: exam.mathDictionary || {}, page, maxPage, flaggedQuestions: [...flaggedQuestions], savedAt: Date.now(),
       }));
-      if (!backup.ok) setStorageWarning('Không thể lưu bản dự phòng. Hãy giữ trang này mở cho đến khi nộp thành công.');
-      await withTimeout(setDoc(doc(db, 'submissions', attemptIdRef.current), payloadRef.current), 30000);
+      if (!backup.ok) setStorageWarning('Không lưu được bản dự phòng. Hãy giữ trang mở cho đến khi nộp thành công.');
+      const result = await submitAttempt({ ...payloadRef.current, cheatCount, violations: violationsRef.current });
 
       // Xóa tiến trình đã lưu sau khi nộp bài thành công
       const progressKey = `exam_progress_${examId}_${currentUser?.uid || 'anonymous'}`;
       storageOperation('removeItem', progressKey);
+      storageOperation('removeItem', violationsKey);
 
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-      alert(`Nộp bài thành công!\nĐiểm: ${score}/10 (${correct}/${gradable} câu đúng)`);
+      alert(`Nộp bài thành công!\nĐiểm: ${result.score}/10 (${result.correctCount}/${result.gradable} câu đúng)${result.expired ? '\nBài hết giờ: chấm câu trả lời đã lưu trên máy chủ.' : ''}`);
       navigate("/student");
     } catch (e) { 
       isSubmittingRef.current = false;
@@ -440,7 +440,7 @@ export default function TakeExam() {
       alert('Chưa xác nhận được bài đã lưu. Giữ trang này mở và bấm nộp lại; hệ thống sẽ dùng cùng mã bài làm để tránh nộp trùng.');
     } finally { setSubmitting(false); }
 
-  }, [exam, currentUser, examId, userAnswers, studentManualName, cheatCount, deadline, submissionCount, navigate, level, page, maxPage, flaggedQuestions]);
+  }, [exam, currentUser, examId, userAnswers, studentManualName, cheatCount, deadline, navigate, page, maxPage, flaggedQuestions, violationsKey]);
 
   // Timer
   useEffect(() => {
@@ -449,7 +449,7 @@ export default function TakeExam() {
       if (!autoSubmittedRef.current) { autoSubmittedRef.current = true; processSubmit(); }
       return;
     }
-    const t = setInterval(() => setTimeLeft(Math.max(0, Math.ceil((deadline - Date.now()) / 1000))), 1000);
+    const t = setInterval(() => setTimeLeft(Math.max(0, Math.ceil((deadline - Date.now() - serverOffsetRef.current) / 1000))), 1000);
     return () => clearInterval(t);
   }, [timeLeft, exam, hasStarted, deadline, processSubmit]);
 
@@ -457,7 +457,7 @@ export default function TakeExam() {
     ? exam.questions.filter((q, i) => isAnswered(userAnswers[i], q.type || 'single')).length
     : 0;
   const totalQ = exam?.questions?.length || 0;
-  const limitReached = exam?.attemptLimit > 0 && submissionCount >= exam.attemptLimit;
+  const limitReached = !savedProgress && exam?.attemptLimit > 0 && submissionCount >= exam.attemptLimit;
   const isTimeLow = timeLeft <= 120 && timeLeft > 0;
 
   if (loading) return (
@@ -468,11 +468,7 @@ export default function TakeExam() {
   if (!exam) return <div className="p-8 text-center"><p role="alert">{loadError || 'Không tải được đề thi.'}</p><button onClick={() => window.location.reload()} className="mt-4 px-4 py-2 rounded-xl bg-blue-600 text-white">Thử lại</button></div>;
 
   const isRestricted = exam.accessType === 'restricted';
-  const isAllowed = !isRestricted || (Array.isArray(exam.allowedUsers) && exam.allowedUsers.some(
-    u => u?.shortId === currentUser?.shortId && 
-    (String(u?.name || '').toLowerCase().trim() === currentUser?.displayName?.toLowerCase().trim() ||
-     String(u?.name || '').toLowerCase().trim() === studentManualName?.toLowerCase().trim())
-  ));
+  const isAllowed = true; // The backend checks the actual roster before creating a new attempt.
 
   // ── PHASE 1: Lobby ──────────────────────────────────────────────────
   if (!hasStarted) {
@@ -493,9 +489,9 @@ export default function TakeExam() {
           <div className="px-6 py-5 space-y-3">
             {[
               { icon: Clock, label: "Thời gian làm bài", value: `${exam.duration} phút` },
-              { icon: FileText, label: "Số lượng câu hỏi", value: `${exam.questions.length} câu` },
+              { icon: FileText, label: "Số lượng câu hỏi", value: `${exam.questionCount} câu` },
               { icon: ListChecks, label: "Hình thức", value: "Trắc nghiệm" },
-              { icon: Route, label: "Cách làm bài", value: describeFlow(normalizeFlow(exam, exam.questions.length)) },
+              { icon: Route, label: "Cách làm bài", value: describeFlow(normalizeFlow(exam, exam.questionCount)) },
               { icon: Users, label: "Giáo viên", value: exam.teacherName },
             ].map((item, i) => (
               <div key={i} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
@@ -516,10 +512,14 @@ export default function TakeExam() {
                 Bạn đã làm bài {submissionCount}/{exam.attemptLimit === 0 ? "Không giới hạn" : exam.attemptLimit} lần
               </span>
             </div>
-            {fullscreenRequired && <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
-              <p className="text-sm font-bold">{level === 'strict' ? 'Cấp 2 — Bảo mật cao nhất' : 'Cấp 1 — Toàn màn hình bình thường'}</p>
+            {level !== 'off' && <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+              <p className="text-sm font-bold">{{ strict: 'Cấp 2 — Bảo mật cao nhất', mobile: 'Cấp 2 — Cho phép điện thoại', normal: 'Cấp 1 — Toàn màn hình bình thường' }[mode]}</p>
               {screenVerificationRequired && <p className="text-xs">Chỉ dùng một màn hình. Cần cấp quyền kiểm tra màn hình trước khi vào thi.</p>}
-              <p className="text-xs">{level === 'strict' ? 'Rời tab/cửa sổ, thoát toàn màn hình hoặc kết nối thêm màn hình phụ sẽ khóa bài và ghi nhận vi phạm. Đồng hồ vẫn tiếp tục chạy.' : 'Chỉ mở toàn màn hình lúc bắt đầu. Không kiểm tra màn hình phụ, không giám sát hoặc ghi nhận việc chuyển tab/thoát toàn màn hình.'}</p>
+              <p className="text-xs">{level === 'normal'
+                ? 'Chỉ mở toàn màn hình lúc bắt đầu. Không kiểm tra màn hình phụ, không giám sát hoặc ghi nhận việc chuyển tab/thoát toàn màn hình.'
+                : profile.screens
+                  ? 'Rời tab/cửa sổ, thoát toàn màn hình hoặc kết nối thêm màn hình phụ sẽ khóa bài và ghi nhận vi phạm. Đồng hồ vẫn tiếp tục chạy.'
+                  : `Rời khỏi trang bài thi (chuyển ứng dụng, chuyển tab, về màn hình chính, khóa màn hình)${profile.fullscreen ? ' hoặc thoát toàn màn hình' : ''} sẽ khóa bài và ghi nhận vi phạm kèm thời gian rời. Màn hình được giữ sáng trong lúc thi. Đồng hồ vẫn tiếp tục chạy.`}</p>
               {screenVerificationRequired && <>
               <button type="button" onClick={security.prepare} disabled={security.checking} className="px-3 py-2 rounded-lg bg-white border border-amber-300 text-sm font-semibold">{security.checking ? 'Đang kiểm tra…' : 'Kiểm tra màn hình'}</button>
               {security.screenState === 'single' && <p className="text-xs text-emerald-700" role="status">Đã xác minh một màn hình.</p>}
@@ -531,17 +531,31 @@ export default function TakeExam() {
           </div>
           <div className="px-6 pb-6">
             {savedProgress && <div role="status" className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-              <p className="font-bold">Bạn có bài thi đang làm dở</p>
+              <p className="font-bold">Bạn có bài thi đang làm chưa xong</p>
               <p>Câu trả lời, thứ tự câu hỏi và vị trí đang làm sẽ được khôi phục. Thời gian tiếp tục tính từ lúc bắt đầu, không được đặt lại.</p>
             </div>}
+            {securityMessage && <p role="alert" className="mb-4 text-sm text-red-700">{securityMessage}</p>}
+            {autoSubmitted && <div role="status" className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+              <p className="font-bold">Lượt thi trước đã hết giờ và được tự động nộp</p>
+              <p>Bài được chấm theo các câu trả lời đã lưu trên máy chủ. Điểm: {autoSubmitted.score}/10 ({autoSubmitted.correctCount}/{autoSubmitted.gradable} câu đúng).</p>
+            </div>}
+            {storageWarning && <p role="status" className="mb-4 text-sm text-amber-800">{storageWarning}</p>}
             {progressError && <p role="alert" className="mb-4 text-sm text-red-700">{progressError}</p>}
+            {legacyBackup && <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              <p>Bài làm chưa xong từ phiên bản cũ được giữ riêng. Tải bản sao câu trả lời để gửi giáo viên trước khi bắt đầu lượt mới.</p>
+              <button type="button" className="mt-2 font-bold underline" onClick={() => {
+                const url = URL.createObjectURL(new Blob([JSON.stringify(legacyBackup, null, 2)], { type: 'application/json' }));
+                const link = document.createElement('a'); link.href = url; link.download = `bai-lam-cu-${examId}.json`; link.click();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+              }}>Tải bản sao câu trả lời</button>
+            </div>}
             {isRestricted && (
               <div className={`p-4 rounded-xl border ${isAllowed ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'} mb-4`}>
                 <p className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 mb-1">
                   <Shield className="w-4 h-4 shrink-0" /> Chế độ truy cập: Hạn chế
                 </p>
                 {isAllowed ? (
-                  <p className="text-[11px] font-medium">Bạn đã được cấp quyền làm đề thi này. Hãy kiểm tra hoặc nhập đúng Họ và tên của bạn bên dưới.</p>
+                  <p className="text-[11px] font-medium">Quyền tham gia được kiểm tra trên máy chủ khi vào thi. Hãy nhập đúng họ tên của bạn.</p>
                 ) : (
                   <p className="text-[11px] font-medium">
                     Bạn <b>chưa có tên</b> trong danh sách học sinh được phép tham gia. Vui lòng nhập đúng Họ và tên (ví dụ: trùng với tên kết bạn) hoặc liên hệ Giáo viên để được cấp quyền với mã định danh <b>#{currentUser?.shortId}</b>.
@@ -559,7 +573,7 @@ export default function TakeExam() {
                 className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-gray-900"
               />
             </div>
-            {exam?.password && exam.password.trim() !== "" && (
+            {exam.hasPassword && (
               <div className="mb-4">
                 <label className="block text-xs font-black text-gray-400 uppercase tracking-wider mb-2">Mật khẩu đề thi</label>
                 <input 
@@ -586,40 +600,45 @@ export default function TakeExam() {
                   return alert("Bạn không có quyền tham gia đề thi này. Vui lòng nhập đúng họ tên hoặc liên hệ giáo viên!");
                 }
 
-                // Xác thực mật khẩu đề thi
-                if (exam?.password && exam.password.trim() !== "") {
-                  if (!inputPassword.trim()) {
-                    return alert("Vui lòng nhập mật khẩu đề thi!");
-                  }
-                  if (inputPassword.trim() !== exam.password.trim()) {
-                    return alert("Mật khẩu đề thi không chính xác! Vui lòng thử lại.");
-                  }
-                }
-
                 if (screenVerificationRequired && security.inspect() !== 'single') {
                   setSecurityMessage('Hãy kiểm tra màn hình và ngắt màn hình phụ trước khi bắt đầu.'); return;
                 }
-                let parsed = null;
-                try { parsed = readExamProgress(examId, currentUser.uid, exam.duration * 60); }
-                catch (error) { console.error(error); return alert('Không đọc được bản lưu bài thi. Vui lòng liên hệ giáo viên để tránh mất câu trả lời.'); }
                 startInFlightRef.current = true; setStarting(true);
                 try {
                   if (fullscreenRequired && !await enterFullScreen()) return;
                   if (screenVerificationRequired && security.inspect() !== 'single') { setSecurityMessage('Cấu hình màn hình vừa thay đổi. Hãy kiểm tra lại.'); return; }
-                  if (parsed) {
-                    { const f = normalizeFlow({ ...exam, examFlow: Object.hasOwn(parsed, 'examFlow') ? parsed.examFlow : exam.examFlow, questions: parsed.examSnapshot }, parsed.examSnapshot.length);
-                      const p = Math.max(0, Math.min(f.totalPages - 1, Number(parsed.page) || 0));
-                      setPage(p); setMaxPage(Math.max(p, Math.min(f.totalPages - 1, Number(parsed.maxPage) || 0))); }
-                    setUserAnswers(parsed.userAnswers); setTimeLeft(parsed.timeLeft); setDeadline(parsed.deadline); setCheatCount(parsed.cheatCount);
-                    setExam(prev => ({ ...prev, questions: parsed.examSnapshot, examFlow: Object.hasOwn(parsed, 'examFlow') ? parsed.examFlow : prev.examFlow, mathDictionary: parsed.mathDictionary ?? prev.mathDictionary }));
-                    setFlaggedQuestions(new Set(Array.isArray(parsed.flaggedQuestions) ? parsed.flaggedQuestions : []));
-                    attemptIdRef.current = typeof parsed.attemptId === 'string' && /^[a-zA-Z0-9_-]+$/.test(parsed.attemptId) ? parsed.attemptId : doc(collection(db, 'submissions')).id;
-                    setSubmissionAttempted(!!parsed.submissionAttempted);
-                  } else {
-                    setDeadline(Date.now() + exam.duration * 60000); attemptIdRef.current = doc(collection(db, 'submissions')).id;
-                  }
+                  const session = await startAttempt({ examId, password: inputPassword, studentName: studentManualName });
+                  validateQuestions(session.exam.questions, false);
+                  let local = null;
+                  try { local = readExamProgress(examId, currentUser.uid, exam.duration * 60); } catch { /* Server recovery is still available. */ }
+                  const sameAttempt = local?.attemptId === session.attemptId;
+                  serverOffsetRef.current = session.serverNow - Date.now();
+                  revisionRef.current = session.revision || 0;
+                  const remaining = Math.max(0, Math.ceil((session.deadline - session.serverNow) / 1000));
+                  // Local pending edits can only be submitted while server time remains.
+                  setUserAnswers(sameAttempt && remaining > 0 ? local.userAnswers : session.userAnswers);
+                  setDeadline(session.deadline); setTimeLeft(remaining);
+                  let stored = null;
+                  try { stored = JSON.parse(storageOperation('getItem', violationsKey).value || 'null'); } catch { /* unreadable: use the server copy */ }
+                  const deviceList = normalizeViolations(stored?.attemptId === session.attemptId ? stored.list : []);
+                  const serverList = normalizeViolations(session.violations);
+                  const reopenedAt = Date.now();
+                  const restored = (deviceList.length >= serverList.length ? deviceList : serverList)
+                    .map(v => (v.code === 'hidden' && v.awayMs == null ? { ...v, awayMs: reopenedAt - v.at } : v));
+                  attemptIdRef.current = session.attemptId;
+                  storeViolations(restored);
+                  setCheatCount(Math.max(session.cheatCount, sameAttempt ? local.cheatCount : 0, restored.length));
+                  setExam({ ...session.exam, questionCount: session.exam.questions.length });
+                  setStudentManualName(session.studentName);
+                  const f = normalizeFlow(session.exam, session.exam.questions.length);
+                  const p = Math.max(0, Math.min(f.totalPages - 1, sameAttempt ? local.page || 0 : session.page));
+                  setPage(p); setMaxPage(Math.max(p, Math.min(f.totalPages - 1, session.maxPage)));
+                  setFlaggedQuestions(new Set(sameAttempt && Array.isArray(local.flaggedQuestions) ? local.flaggedQuestions : []));
+                  attemptIdRef.current = session.attemptId;
+                  setSubmissionAttempted(!!(sameAttempt && local.submissionAttempted));
                   setSecurityMessage(''); setHasStarted(true);
-                } finally { startInFlightRef.current = false; setStarting(false); }
+                } catch (error) { setSecurityMessage(error.message || 'Không mở được lượt thi.'); }
+                finally { startInFlightRef.current = false; setStarting(false); }
               }}
               disabled={starting || !!progressError || limitReached || (isRestricted && !isAllowed) || (screenVerificationRequired && security.screenState !== 'single')}
               className={`w-full py-3.5 ${limitReached || (isRestricted && !isAllowed) || (screenVerificationRequired && security.screenState !== 'single') ? "bg-gray-400 cursor-not-allowed" : "bg-orange-500 hover:bg-orange-600 active:bg-orange-700"} text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2 shadow-md`}
@@ -636,11 +655,12 @@ export default function TakeExam() {
   return (
     <div className="fixed inset-0 bg-[#f4f5f7] flex flex-col select-none overflow-hidden pb-[env(safe-area-inset-bottom)]">
       {storageWarning && <p role="alert" className="bg-amber-50 text-amber-900 p-3">{storageWarning}</p>}
+      {syncMessage && <p role="status" className="bg-blue-50 p-2 text-sm">{syncMessage}</p>}
       {submitting && <p role="status" className="bg-blue-50 p-3">Đang lưu bài làm…</p>}
       {submissionAttempted && !submitting && <div role="alert" className="bg-red-50 p-3">Chưa xác nhận nộp thành công. <button onClick={processSubmit} className="font-bold underline">Nộp lại bài</button></div>}
 
       {/* Interruption Modal (Force Fullscreen) */}
-      {isInterrupted && level === 'strict' && (
+      {isInterrupted && monitored && (
         <div className="fixed inset-0 z-[9999] bg-gray-900/95 backdrop-blur-md flex items-center justify-center p-6">
           <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl animate-in zoom-in duration-300">
             <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -654,7 +674,7 @@ export default function TakeExam() {
               <span className="text-sm font-bold text-gray-400 uppercase">Số lần vi phạm</span>
               <span className="text-2xl font-black text-red-600">{cheatCount}</span>
             </div>
-            <button type="button" onClick={security.prepare} disabled={security.checking} className="mb-3 underline text-blue-700">{security.checking ? 'Đang kiểm tra…' : 'Kiểm tra lại màn hình'}</button>
+            {profile.screens && <button type="button" onClick={security.prepare} disabled={security.checking} className="mb-3 underline text-blue-700">{security.checking ? 'Đang kiểm tra…' : 'Kiểm tra lại màn hình'}</button>}
             {security.error && <p role="alert" className="text-red-600 mb-3">{security.error}</p>}
             <button
               onClick={handleResume}
@@ -1064,18 +1084,29 @@ export default function TakeExam() {
         <div className="fixed inset-0 z-[10000] bg-gray-900/80 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full text-center shadow-xl">
             <h3 className="text-xl font-bold text-gray-900 mb-2">Thoát bài thi?</h3>
-            <p className="text-sm text-gray-500 mb-6">Bài làm được lưu trên trình duyệt này. Bạn có thể mở lại từ mục “Bài thi đang làm dở”. Thời gian vẫn tiếp tục chạy khi thoát.</p>
+            <p className="text-sm text-gray-500 mb-6">Bài làm được lưu trên trình duyệt này. Bạn có thể mở lại từ mục “Bài thi đang làm chưa xong”. Thời gian vẫn tiếp tục chạy khi thoát.</p>
             <div className="flex gap-3">
               <button onClick={() => setShowConfirmExit(false)} className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition-colors">Hủy</button>
-              <button onClick={() => {
+              <button disabled={leaving || submitting} onClick={async () => {
+                if (leaving || submitting) return;
                 if (!saveProgressRef.current?.()) {
                   setShowConfirmExit(false);
                   return;
                 }
-                isSubmittingRef.current = true;
-                navigate("/student");
-                if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-              }} className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-colors">Lưu và thoát</button>
+                setLeaving(true);
+                try {
+                  await saveAnswers({ attemptId: attemptIdRef.current, answers: userAnswers, revision: ++revisionRef.current, page, maxPage, cheatCount, violations: violationsRef.current });
+                  isSubmittingRef.current = true;
+                  navigate("/student");
+                  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+                } catch (error) {
+                  if (error.code === 'functions/failed-precondition') await processSubmit();
+                  else {
+                    setStorageWarning('Chưa lưu được câu trả lời lên máy chủ. Hãy kiểm tra kết nối và thử lưu lại trước khi thoát.');
+                    setShowConfirmExit(false);
+                  }
+                } finally { setLeaving(false); }
+              }} className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-colors">{leaving ? 'Đang lưu…' : 'Lưu và thoát'}</button>
             </div>
           </div>
         </div>
