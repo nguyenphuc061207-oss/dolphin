@@ -6,21 +6,29 @@ chỉ deploy Rules sẽ khiến luồng cũ không hoạt động. Không còn c
 
 ## Chuẩn bị
 
-- Dự án Firebase: `azota-c0e26`. Cloud Functions cần gói Blaze; việc bật thanh toán
-  và thay đổi dự án thật cần chủ dự án quyết định.
-- Node 22, Java 21 trở lên cho Emulator, Firebase CLI và thông tin đăng nhập có
-  quyền triển khai. Script migration dùng Application Default Credentials hoặc
-  service account qua `GOOGLE_APPLICATION_CREDENTIALS`; không đưa khóa vào Git.
+- Dự án Firebase: `azota-c0e26`, gói Spark miễn phí là đủ. Backend chạy trên Vercel
+  tại `/api/exam/<method>` ([api/exam/[method].js](api/exam/[method].js)), dùng
+  Firebase Admin SDK để đọc/ghi Firestore, xác minh ID token và App Check; không
+  dùng Cloud Functions. Thay đổi dự án thật cần chủ dự án quyết định.
+- Biến môi trường trên Vercel:
+  - `FIREBASE_SERVICE_ACCOUNT`: toàn bộ JSON khóa service account (Firebase Console →
+    Project settings → Service accounts). Chỉ đặt trên Vercel, không đưa vào Git hay
+    frontend; không có biến này API trả lỗi 500.
+  - `VITE_APPCHECK_SITE_KEY`: site key reCAPTCHA Enterprise cho bản build frontend.
+  - Không đặt `APP_CHECK_REQUIRED` trên production; giá trị `false` chỉ dùng khi chạy
+    Emulator.
 - Đăng ký App Check cho web app hiện có bằng reCAPTCHA Enterprise, khai báo đúng
-  domain website. Đặt `VITE_APPCHECK_SITE_KEY` trên môi trường build frontend.
-  Các callable bắt buộc App Check trong production; thiếu cấu hình sẽ bị từ chối.
-- Cài backend: `npm ci --prefix functions`. Không cần cấp khóa dịch vụ cho frontend.
+  domain website. API bắt buộc App Check trong production; thiếu cấu hình sẽ bị từ chối.
+- Node 22, Java 21 trở lên cho Emulator, Firebase CLI và thông tin đăng nhập có
+  quyền triển khai Rules. Script migration dùng Application Default Credentials hoặc
+  service account qua `GOOGLE_APPLICATION_CREDENTIALS`; không đưa khóa vào Git.
+- Cài phụ thuộc: `pnpm install` (gồm `firebase-admin` cho API và script migration).
 
 ## Kiểm thử cục bộ
 
 ```sh
 npm --prefix functions test
-firebase emulators:exec --project demo-dolphin-access --only firestore,functions,auth "node tests/secure-emulator.mjs"
+firebase emulators:exec --project demo-dolphin-access --only firestore,auth "node tests/secure-emulator.mjs"
 node --test tests/exam-progress.test.mjs tests/exam-security.test.mjs tests/runtime-safety.test.mjs
 node tests/exam-progress.browser.mjs <đường-dẫn-gói-playwright>
 pnpm build
@@ -35,12 +43,14 @@ Auth, không nhận từ payload. App Check không thay thế việc kiểm tra 
 1. Thông báo và chọn thời điểm không có bài đang thi. Lưu bản Rules đang chạy và
    phiên bản frontend hiện tại để đối chiếu. Đáp án từng tải xuống thiết bị cũ không
    thể thu hồi; với đề có yêu cầu bảo mật cao, thay bộ câu hỏi đã bị lộ.
-2. Deploy **Rules mới trước** để chặn đọc/ghi trực tiếp secrets, điểm và document
-   bài thi cũ từ học sinh. Không tạo secrets khi Rules wildcard cũ còn hiệu lực:
+2. Deploy **Rules mới trước**, trước cả khi push code lên Vercel, để chặn đọc/ghi
+   trực tiếp secrets, điểm và document bài thi cũ từ học sinh. Rules cũ có wildcard
+   cho mọi tài khoản đăng nhập đọc/ghi các collection ngoài `exams`/`submissions`,
+   nên `examSecrets`/`submissionSecrets` do API hoặc migration tạo ra sẽ bị lộ nếu
+   Rules cũ còn hiệu lực:
 
    ```sh
    firebase deploy --project azota-c0e26 --only firestore:rules
-   firebase deploy --project azota-c0e26 --only functions:exam-security
    ```
 
 3. Kiểm tra dữ liệu trước khi chuyển (mặc định chỉ đọc):
@@ -68,8 +78,9 @@ Auth, không nhận từ payload. App Check không thay thế việc kiểm tra 
    Script có thể chạy lại; không ghi đè secrets của dữ liệu đã chuyển xong.
    Nếu lỗi giữa chừng, bảo trì vẫn giữ bật để tiếp tục xử lý.
 
-5. Build và triển khai frontend mới với site key App Check. Kiểm tra tài khoản
-   học sinh/giáo viên, mở đề, danh sách kết quả và lịch công bố; sau đó mở lại API:
+5. Đặt biến môi trường trên Vercel (mục Chuẩn bị) rồi push để Vercel build frontend
+   và API. Khi đang bảo trì, API trả thông báo "Bài thi đang được bảo trì": điều đó
+   cho thấy API đã chạy và đọc được Firestore. Sau đó mở lại API:
 
    ```sh
    node functions/migrate.js --project azota-c0e26 --resume

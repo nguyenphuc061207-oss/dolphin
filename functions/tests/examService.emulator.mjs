@@ -95,37 +95,6 @@ await service.checkMaintenance();
 await db.collection('submissions').doc('migration-orphan').set({ examId: 'missing-exam', examSnapshot: examInput.questions, studentId: student });
 assert.ok((await inspectMigration(db)).issues.some(issue => issue.id === 'migration-orphan'));
 
-// Endpoint-level auth smoke test, in addition to the real database service tests.
-const functionsHost = process.env.FUNCTIONS_EMULATOR_HOST || (process.env.FIREBASE_AUTH_EMULATOR_HOST ? '127.0.0.1:5001' : null);
-if (functionsHost) {
-  const response = await fetch(`http://${functionsHost}/demo-dolphin-access/asia-southeast1/getExamInfo`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data: { examId } }),
-  });
-  assert.equal(response.status, 401);
-  if (process.env.FIREBASE_AUTH_EMULATOR_HOST) {
-    const authResponse = await fetch(`http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake-key`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ returnSecureToken: true }),
-    });
-    const auth = await authResponse.json();
-    assert.ok(auth.idToken);
-    await db.collection('users').doc(auth.localId).set({ uid: auth.localId, displayName: 'HTTP student', shortId: '4321' });
-    const { examId: httpExam } = await service.publishExam(teacher, { ...examInput, password: '', reviewSettings: { mode: 'always' } });
-    const http = async (method, data) => {
-      const response = await fetch(`http://${functionsHost}/demo-dolphin-access/asia-southeast1/${method}`, {
-        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${auth.idToken}` }, body: JSON.stringify({ data }),
-      });
-      assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
-      return (await response.json()).result;
-    };
-    const session = await http('startAttempt', { examId: httpExam });
-    assert.equal(JSON.stringify(session).includes('correctAnswer'), false);
-    await http('saveAnswers', { attemptId: session.attemptId, revision: 1, answers: { 0: 1 } });
-    const score = await http('submitAttempt', { attemptId: session.attemptId, answers: { 0: 1 }, score: 0 });
-    assert.equal(score.score, 10);
-    const review = await http('getReview', { submissionId: session.attemptId });
-    assert.equal(review.submission.examSnapshot[0].correctAnswer, 1);
-    console.log('PASS: HTTP callable authentication, sanitized start, autosave, server score and authorized review');
-  }
-}
+// Endpoint-level checks (ID token, sanitized start, server score, review) live in tests/vercel-api.emulator.mjs.
 console.log('PASS: private responses, concurrent starts, deadlines, immutable scores, retries, review release, roster, archive, dry-run/idempotent migration, authentication');
 await db.terminate();

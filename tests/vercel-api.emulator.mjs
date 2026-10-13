@@ -24,13 +24,14 @@ async function call(name, input, token) {
   return out;
 }
 
+// The route initializes the Admin app on its first request, so these run before getFirestore().
+assert.equal((await call('getExamInfo', { examId: 'x' })).status, 401, 'no token is rejected');
+assert.equal((await call('getExamInfo', { examId: 'x' }, 'forged')).status, 401, 'forged token is rejected');
+
 const teacher = await signUp('teacher@example.com');
 const student = await signUp('student@example.com');
 const db = getFirestore();
 for (const u of [teacher, student]) await db.collection('users').doc(u.uid).set({ uid: u.uid, displayName: u.uid === teacher.uid ? 'Giáo viên' : 'Học sinh', shortId: u.uid.slice(0, 6) });
-
-assert.equal((await call('getExamInfo', { examId: 'x' })).status, 401, 'no token is rejected');
-assert.equal((await call('getExamInfo', { examId: 'x' }, 'forged')).status, 401, 'forged token is rejected');
 
 const published = await call('publishExam', {
   title: 'Đề thử', duration: 10, attemptLimit: 1, accessType: 'public', reviewSettings: { mode: 'never' },
@@ -64,6 +65,13 @@ assert.equal(result.body.score, 10);
 const submission = (await db.collection('submissions').doc(result.body.submissionId).get()).data();
 assert.deepEqual(submission.violations, violations, 'an empty list at submit cannot erase recorded violations');
 assert.equal(submission.cheatCount, 1);
+
+const studentReview = await call('getReview', { submissionId: result.body.submissionId }, student.token);
+assert.equal(studentReview.status, 200, JSON.stringify(studentReview.body));
+assert.equal(studentReview.body.locked, true, 'review mode "never" keeps the key from the student');
+assert.equal(JSON.stringify(studentReview.body).includes('correctAnswer'), false);
+const teacherReview = await call('getReview', { submissionId: result.body.submissionId }, teacher.token);
+assert.equal(teacherReview.body.submission.examSnapshot[0].correctAnswer, 1, 'the exam owner still reviews with the key');
 
 const expired = await call('saveAnswers', { attemptId: attempt.body.attemptId, answers: { 0: 0 }, revision: 2 }, student.token);
 assert.equal(expired.status, 400);

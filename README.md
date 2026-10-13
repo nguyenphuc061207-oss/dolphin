@@ -19,7 +19,8 @@ Các biến môi trường: `VITE_GEMINI_API_KEY` cho trợ lý AI và
 
 ## Bảo vệ đáp án và bài nộp
 
-Backend Cloud Functions quản lý lượt thi, hạn giờ, lưu câu trả lời và chấm điểm.
+Backend chạy trên Vercel (`/api/exam/<method>`, mã nguồn ở `api/` và `functions/`)
+quản lý lượt thi, hạn giờ, lưu câu trả lời và chấm điểm qua Firebase Admin SDK.
 Đáp án/lời giải nằm trong examSecrets và submissionSecrets, học sinh không đọc
 trực tiếp được. API xem lại chỉ trả đáp án theo quyền và lịch công bố của đề.
 Chủ sở hữu đề vẫn xem và chấm lại bài qua API. Trình duyệt không tự ghi điểm.
@@ -30,8 +31,9 @@ học sinh chưa nộp được máy chủ tự nộp (`finishExpiredAttempts`) 
 chủ/đề thi hoặc giáo viên mở danh sách bài nộp; bài nộp đó có cờ `autoSubmitted`.
 
 Xem [SECURITY_DEPLOYMENT.md](SECURITY_DEPLOYMENT.md) để cài backend, thiết lập App
-Check, chạy Emulator, kiểm tra/chuyển dữ liệu cũ và triển khai đồng bộ. Bản mới
-cần Blaze và site key App Check; chỉ push Git hoặc deploy Rules chưa đủ.
+Check, chạy Emulator, kiểm tra/chuyển dữ liệu cũ và triển khai đồng bộ. Firebase
+gói Spark là đủ; bản mới cần `FIREBASE_SERVICE_ACCOUNT` trên Vercel và site key App
+Check. Chỉ push Git hoặc chỉ deploy Rules chưa đủ.
 
 ## Cấu trúc
 
@@ -69,6 +71,9 @@ src/
     ├── math/                    # ASCII Math, MathML, OMML, chuẩn hóa LaTeX
     └── utils/                   # cn
 
+api/exam/[method].js             # Route Vercel: xác minh token/App Check rồi gọi backend
+functions/                       # Backend đề thi (examService), chính sách, migration
+tests/                           # Unit, trình duyệt (Playwright + Edge) và Emulator
 public/                          # Logo và mascot đang sử dụng
 archive/                         # Snapshot, template và chat cũ để tra cứu
 ```
