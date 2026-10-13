@@ -134,7 +134,7 @@ export default function StudentDashboard() {
               return;
             }
             console.error('Không tải được cấu hình đề:', error);
-            if (active) setLoadError('Một số cấu hình đề thi chưa tải được. Điểm đã lưu vẫn được giữ nguyên.');
+            if (active) setLoadError(`Một số cấu hình đề thi chưa tải được${error?.message ? ` (${error.message})` : ''}. Điểm đã lưu vẫn được giữ nguyên.`);
           }
         });
         if (active) setExamConfigs(configs);
