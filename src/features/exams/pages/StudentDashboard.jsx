@@ -128,6 +128,11 @@ export default function StudentDashboard() {
               configs[examId] = { limit: data.attemptLimit ?? 0, reviewSettings: data.reviewSettings || { mode: 'always' }, attemptCount: rawSubs.filter(sub => sub.examId === examId).length };
             }
           } catch (error) {
+            // The teacher removed the exam: the result stays in history but cannot be retaken.
+            if (error?.code === 'functions/not-found') {
+              configs[examId] = { removed: true, limit: 1, attemptCount: 1, reviewSettings: { mode: 'never' } };
+              return;
+            }
             console.error('Không tải được cấu hình đề:', error);
             if (active) setLoadError('Một số cấu hình đề thi chưa tải được. Điểm đã lưu vẫn được giữ nguyên.');
           }
@@ -261,7 +266,7 @@ export default function StudentDashboard() {
                     <span className="student-correct-count">{sub.correctCount ?? '—'} / {sub.totalQuestions ?? '—'} câu đúng</span>
                     <div className="student-result-actions">
                       {reviewLocked ? <span className="student-review-locked"><LockKeyhole size={14} aria-hidden="true" />Đang khóa</span> : <Link to={`/student/review/${sub.id}?from=student`}>Xem bài làm<ArrowRight size={15} aria-hidden="true" /></Link>}
-                      <button onClick={() => navigate(`/student/exam/${sub.examId}`)} disabled={limitReached} aria-label={`Làm lại đề ${sub.examTitle}`} title={limitReached ? 'Hết lượt làm bài' : 'Làm lại đề thi'}><RefreshCw size={15} aria-hidden="true" />{limitReached ? 'Hết lượt' : 'Làm lại'}</button>
+                      <button onClick={() => navigate(`/student/exam/${sub.examId}`)} disabled={limitReached} aria-label={`Làm lại đề ${sub.examTitle}`} title={config.removed ? 'Giáo viên đã gỡ đề này' : limitReached ? 'Hết lượt làm bài' : 'Làm lại đề thi'}><RefreshCw size={15} aria-hidden="true" />{config.removed ? 'Đề đã gỡ' : limitReached ? 'Hết lượt' : 'Làm lại'}</button>
                       <button onClick={() => handleDeleteSubmission(sub.id)} className="student-remove-result" aria-label={`Xóa bài làm ${sub.examTitle}`} title="Xóa khỏi lịch sử"><Trash2 size={16} /></button>
                     </div>
                   </div>

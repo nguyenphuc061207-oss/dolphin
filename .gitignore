@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 .env
 .env.*
+
+# Local migration inputs (owner maps etc.)
+*.local.json
