@@ -1,5 +1,3 @@
-import React from 'react';
-
 export const footerDocuments = {
   terms: {
     title: "Điều khoản dịch vụ",

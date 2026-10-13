@@ -15,7 +15,8 @@ import { useAuth } from "@/features/auth/hooks/useAuth";
 import { Link } from "react-router-dom";
 import { parseQuestionsFromHtml } from "../parsers/questionParser";
 import { extractTxtToHtml, plainTextToHtml } from "../parsers/txtExtractor";
-import QuestionEditorCard, { MoveButtons, convertQuestionType, getQuestionIssues } from "../components/QuestionEditorCard";
+import QuestionEditorCard, { MoveButtons } from "../components/QuestionEditorCard";
+import { convertQuestionType, getQuestionIssues } from "../utils/questionEditing";
 import RichTextEditor from "@/shared/components/RichTextEditor";
 import { htmlToPlain, normalizeQuestionExplanation, normalizeExplanation } from "@/shared/utils/richText";
 import RichTextRenderer from "@/shared/components/RichTextRenderer";
@@ -97,6 +98,32 @@ const ToggleSwitch = ({ enabled, onChange, label, description, icon: Icon }) => 
     </div>
 );
 
+const loadRecentExams = async (uid) => {
+    const q = query(collection(db, "exams"), where("teacherId", "==", uid), where('archived', '==', false));
+    const exams = (await getDocs(q)).docs.map((d) => ({ id: d.id, ...d.data() }));
+    exams.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
+    return exams.slice(0, 4); // Chỉ hiện 4 đề gần nhất ở Dashboard
+};
+
+const submittedMillis = (item) => item.submittedAt?.toMillis ? item.submittedAt.toMillis() : new Date(item.submittedAt).getTime();
+
+// Bài nộp mới nhất của các đề do giáo viên sở hữu, kèm số bài chưa xem.
+const loadNotifications = async (uid) => {
+    const examsSnap = await getDocs(query(collection(db, "exams"), where("teacherId", "==", uid)));
+    const myExamIds = examsSnap.docs.map((d) => d.id);
+    if (myExamIds.length === 0) return { notifications: [], unread: 0 };
+
+    // Each query checks one exam owner, within Firestore Rules' access limit.
+    const subSnaps = await mapConcurrent(myExamIds.slice(0, 30), examId => getDocs(query(
+        collection(db, "submissions"), where("examId", "==", examId), where("teacherId", "==", uid), where("schemaVersion", "==", 2)
+    )));
+    const list = subSnaps.flatMap(subSnap => subSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })));
+    list.sort((a, b) => submittedMillis(b) - submittedMillis(a));
+
+    const lastSeenTime = Number(storageOperation('getItem', `notifications_last_seen_${uid}`).value || 0);
+    return { notifications: list.slice(0, 10), unread: list.filter(item => submittedMillis(item) > lastSeenTime).length };
+};
+
 export default function TeacherDashboard() {
     const { currentUser } = useAuth();
     useDocumentTitle("Dolphin | Tạo đề thi");
@@ -166,7 +193,7 @@ export default function TeacherDashboard() {
     const [previewQuestions, setPreviewQuestions] = useState([]);
     const [editingPreviewIdx, setEditingPreviewIdx] = useState(null);
     const [editingQuestionIdx, setEditingQuestionIdx] = useState(null);
-    const [mathDictionary, setMathDictionary] = useState({}); // token → LaTeX map
+    const [mathDictionary] = useState({}); // token → LaTeX map
     const fileInputRef = useRef(null);
     const fileRequestRef = useRef(0);
     const saveInFlightRef = useRef(false);
@@ -249,17 +276,17 @@ export default function TeacherDashboard() {
 
     const fetchExams = async () => {
         if (!currentUser) return;
-        try {
-            const q = query(collection(db, "exams"), where("teacherId", "==", currentUser.uid), where('archived', '==', false));
-            const querySnapshot = await getDocs(q);
-            const exams = [];
-            querySnapshot.forEach((doc) => exams.push({ id: doc.id, ...doc.data() }));
-            exams.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
-            setExamsList(exams.slice(0, 4)); // Chỉ hiện 4 đề gần nhất ở Dashboard
-        } catch (error) { console.error("Lỗi fetch:", error); }
+        try { setExamsList(await loadRecentExams(currentUser.uid)); } catch (error) { console.error("Lỗi fetch:", error); }
     };
 
-    useEffect(() => { fetchExams(); }, [currentUser]);
+    useEffect(() => {
+        if (!currentUser) return;
+        let active = true;
+        loadRecentExams(currentUser.uid)
+            .then((exams) => { if (active) setExamsList(exams); })
+            .catch((error) => console.error("Lỗi fetch:", error));
+        return () => { active = false; };
+    }, [currentUser]);
 
     // Fetch danh sách bạn bè để quản lý quyền truy cập
     useEffect(() => {
@@ -281,58 +308,17 @@ export default function TeacherDashboard() {
     }, [currentUser]);
 
     // Fetch thông báo nộp bài cho giáo viên
-    const fetchNotifications = async () => {
-        if (!currentUser) return;
-        try {
-            const examsQ = query(collection(db, "exams"), where("teacherId", "==", currentUser.uid));
-            const examsSnap = await getDocs(examsQ);
-            const myExamIds = [];
-            examsSnap.forEach((doc) => {
-                myExamIds.push(doc.id);
-            });
-
-            if (myExamIds.length === 0) {
-                setNotifications([]);
-                setUnreadCount(0);
-                return;
-            }
-
-            const limitExamIds = myExamIds.slice(0, 30);
-            // Each query checks one exam owner, within Firestore Rules' access limit.
-            const subSnaps = await mapConcurrent(limitExamIds, examId => getDocs(query(
-                collection(db, "submissions"), where("examId", "==", examId), where("teacherId", "==", currentUser.uid), where("schemaVersion", "==", 2)
-            )));
-            const list = [];
-            subSnaps.forEach(subSnap => subSnap.forEach((docSnap) => {
-                const data = docSnap.data();
-                list.push({
-                    id: docSnap.id,
-                    ...data,
-                });
-            }));
-
-            list.sort((a, b) => {
-                const aTime = a.submittedAt?.toMillis ? a.submittedAt.toMillis() : new Date(a.submittedAt).getTime();
-                const bTime = b.submittedAt?.toMillis ? b.submittedAt.toMillis() : new Date(b.submittedAt).getTime();
-                return bTime - aTime;
-            });
-
-            setNotifications(list.slice(0, 10));
-            
-            const lastSeenTime = storageOperation('getItem', `notifications_last_seen_${currentUser.uid}`).value || 0;
-            const unread = list.filter(item => {
-                const itemTime = item.submittedAt?.toMillis ? item.submittedAt.toMillis() : new Date(item.submittedAt).getTime();
-                return itemTime > Number(lastSeenTime);
-            }).length;
-            
-            setUnreadCount(unread);
-        } catch (err) {
-            console.error("Lỗi fetch thông báo:", err);
-        }
-    };
-
     useEffect(() => {
-        fetchNotifications();
+        if (!currentUser) return;
+        let active = true;
+        loadNotifications(currentUser.uid)
+            .then(({ notifications, unread }) => {
+                if (!active) return;
+                setNotifications(notifications);
+                setUnreadCount(unread);
+            })
+            .catch((err) => console.error("Lỗi fetch thông báo:", err));
+        return () => { active = false; };
     }, [currentUser]);
 
     const handleToggleNotifications = () => {
@@ -957,7 +943,7 @@ return (
                             <strong>Bạn có một đề đang soạn dở</strong>
                             <span>
                                 {draftOffer.examTitle ? `“${draftOffer.examTitle}” · ` : ''}
-                                {draftOffer.questions?.length || 0} câu hỏi · lưu lúc {new Date(draftOffer.savedAt || Date.now()).toLocaleString('vi-VN')}
+                                {draftOffer.questions?.length || 0} câu hỏi{draftOffer.savedAt ? ` · lưu lúc ${new Date(draftOffer.savedAt).toLocaleString('vi-VN')}` : ''}
                             </span>
                         </div>
                         <button type="button" onClick={restoreDraft} className="button-primary">Khôi phục</button>
@@ -1284,7 +1270,6 @@ return (
                                                         ) : (
                                                             <div className={`grid gap-2 ${isShortOptions(q.options) ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"}`}>
                                                                 {q.options.map((opt, oi) => {
-                                                                    let isCorrect = false;
                                                                     let labelSuffix = '';
                                                                     let itemBg = 'bg-white border-gray-100 text-gray-600';
                                                                     
@@ -1295,7 +1280,7 @@ return (
                                                                             ? 'bg-emerald-50 border-emerald-300 text-emerald-800 font-bold'
                                                                             : 'bg-rose-50 border-rose-300 text-rose-800 font-bold';
                                                                     } else {
-                                                                        isCorrect = qType === 'multiple'
+                                                                        const isCorrect = qType === 'multiple'
                                                                             ? Array.isArray(q.correctAnswer) && q.correctAnswer.map(Number).includes(oi)
                                                                             : oi === q.correctAnswer;
                                                                         if (isCorrect) {

@@ -1,4 +1,3 @@
-import React from 'react';
 import { cn } from '@/shared/utils/cn';
 import DolphinAvatar from './DolphinAvatar';
 import RichTextRenderer from '@/shared/components/RichTextRenderer';

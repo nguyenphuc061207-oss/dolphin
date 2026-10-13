@@ -353,23 +353,23 @@ const toLatex = (() => {
                         : false;
 
                     const OP_MAP = {
-                        '∑': '\\sum', '\u2211': '\\sum',
-                        '∏': '\\prod', '\u220F': '\\prod',
-                        '∐': '\\coprod', '\u2210': '\\coprod',
-                        '∫': '\\int', '\u222B': '\\int',
-                        '∬': '\\iint', '\u222C': '\\iint',
-                        '∭': '\\iiint', '\u222D': '\\iiint',
-                        '∮': '\\oint', '\u222E': '\\oint',
-                        '∯': '\\oiint', '\u222F': '\\oiint',
-                        '∰': '\\oiiint', '\u2230': '\\oiiint',
-                        '⋃': '\\bigcup', '\u22C3': '\\bigcup',
-                        '⋂': '\\bigcap', '\u22C2': '\\bigcap',
+                        '∑': '\\sum',
+                        '∏': '\\prod',
+                        '∐': '\\coprod',
+                        '∫': '\\int',
+                        '∬': '\\iint',
+                        '∭': '\\iiint',
+                        '∮': '\\oint',
+                        '∯': '\\oiint',
+                        '∰': '\\oiiint',
+                        '⋃': '\\bigcup',
+                        '⋂': '\\bigcap',
                         '⊕': '\\bigoplus',
                         '⊗': '\\bigotimes',
                         '⊙': '\\bigodot',
                         '⊎': '\\biguplus',
-                        '⋁': '\\bigvee', '\u22C1': '\\bigvee',
-                        '⋀': '\\bigwedge', '\u22C0': '\\bigwedge',
+                        '⋁': '\\bigvee',
+                        '⋀': '\\bigwedge',
                         '⊔': '\\bigsqcup',
                     };
 
@@ -581,7 +581,6 @@ const toLatex = (() => {
                     // Arc, arrows, overbrace/underbrace
                     const CHR_MAP = {
                         '⌣': `\\overset{\\frown}{${eTex}}`,
-                        '\u2322': `\\overset{\\frown}{${eTex}}`,
                         '⌢': `\\overset{\\frown}{${eTex}}`,
                         '⌒': `\\overset{\\frown}{${eTex}}`, // cung AB
                         '⏞': `\\overbrace{${eTex}}`,

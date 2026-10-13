@@ -5,16 +5,21 @@ import { withTimeout } from '@/shared/utils/runtimeSafety';
 import TeacherSidebar from '../components/TeacherSidebar';
 import ExamSecurityOptions from '../components/ExamSecurityOptions';
 import { useState, useEffect } from "react";
-import { db, auth } from "@/shared/config/firebase";
+import { db } from "@/shared/config/firebase";
 import { collection, query, where, getDocs, doc, updateDoc } from "firebase/firestore";
 import { deleteExam, updateExamSettings } from '../services/examApi';
 import { useAuth } from "@/features/auth/hooks/useAuth";
 import { Link } from "react-router-dom";
-import { signOut } from "firebase/auth";
 import { ChevronLeft,
-    LayoutDashboard, BookOpen, LogOut,
-    Search, BarChart3, Copy, Trash2, Clock, FileText, Shield, KeyRound, X, UserPlus, Plus, Users, Eye, MoreVertical
+    Search, BarChart3, Copy, Trash2, Clock, FileText, Shield, X, Plus, Eye, MoreVertical
 } from 'lucide-react';
+
+const loadExams = async (uid) => {
+    const q = query(collection(db, "exams"), where("teacherId", "==", uid), where('archived', '==', false));
+    const exams = (await getDocs(q)).docs.map((d) => ({ id: d.id, ...d.data() }));
+    // Sắp xếp mới nhất lên đầu
+    return exams.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
+};
 
 export default function ManageExams() {
     useDocumentTitle('Dolphin | Đề thi của tôi');
@@ -74,32 +79,24 @@ export default function ManageExams() {
         setActiveDropdownId(activeDropdownId === examId ? null : examId);
     };
 
-    const handleLogout = async () => {
-        try {
-            await signOut(auth);
-        } catch (error) {
-            console.error("Lỗi đăng xuất:", error);
-        }
-    };
-
     const fetchExams = async () => {
         if (!currentUser) return;
         try {
-            const q = query(collection(db, "exams"), where("teacherId", "==", currentUser.uid), where('archived', '==', false));
-            const querySnapshot = await getDocs(q);
-            const exams = [];
-            querySnapshot.forEach((doc) => exams.push({ id: doc.id, ...doc.data() }));
-            // Sắp xếp mới nhất lên đầu
-            exams.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
-            setExamsList(exams);
+            setExamsList(await loadExams(currentUser.uid));
         } catch (error) {
             console.error("Lỗi fetch:", error);
-        } finally {
-            setIsLoading(false);
         }
     };
 
-    useEffect(() => { fetchExams(); }, [currentUser]);
+    useEffect(() => {
+        if (!currentUser) return;
+        let active = true;
+        loadExams(currentUser.uid)
+            .then((exams) => { if (active) setExamsList(exams); })
+            .catch((error) => console.error("Lỗi fetch:", error))
+            .finally(() => { if (active) setIsLoading(false); });
+        return () => { active = false; };
+    }, [currentUser]);
 
     // Fetch danh sách bạn bè để chọn nhanh khi chỉnh sửa quyền truy cập
     useEffect(() => {

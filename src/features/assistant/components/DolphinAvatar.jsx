@@ -1,4 +1,3 @@
-import React from 'react';
 import { cn } from '@/shared/utils/cn';
 
 export default function DolphinAvatar({ className, size = 'md', isThinking = false }) {

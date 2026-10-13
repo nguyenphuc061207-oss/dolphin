@@ -204,7 +204,7 @@ const AM_KEYWORDS = AM_SYMBOLS.map(([k]) => k).sort((a, b) => b.length - a.lengt
 
 // Also inside backticks: a/b, (x+1)/(x-1), |x-1|, x^(n+1), f'(x), 30^@, Delta ABC.
 // Lines about programming are still left alone by isCodeCallAt.
-const ASCIIMATH_INDICATORS = /(?:sqrt|frac|sum|int|prod|lim|alpha|beta|gamma|delta|theta|pi|sigma|omega|infty|partial|nabla|forall|exists|rightarrow|leftarrow|Rightarrow|Leftrightarrow|vec|hat|bar|tilde|neq|geq|leq|approx|equiv|cdot|times|div|pm|cup|cap|subset|supset|emptyset|mathbb|begin|end|\\\\[a-zA-Z]|\^[\{0-9(@]|_[\{0-9(]|[a-z]\^[0-9]|[a-z]_[0-9]|>=|<=|!=|->|=>|xx|\+-|oo|RR|QQ|ZZ|NN|CC|AA|EE|[\w)]\s*\/\s*[\w(]|\|[^|]+\||[A-Za-z]'+\(|\b(?:Delta|Gamma|Theta|Lambda|Sigma|Phi|Psi|Omega|epsilon|lambda|mu|rho|tau|phi|psi)\b)/;
+const ASCIIMATH_INDICATORS = /(?:sqrt|frac|sum|int|prod|lim|alpha|beta|gamma|delta|theta|pi|sigma|omega|infty|partial|nabla|forall|exists|rightarrow|leftarrow|Rightarrow|Leftrightarrow|vec|hat|bar|tilde|neq|geq|leq|approx|equiv|cdot|times|div|pm|cup|cap|subset|supset|emptyset|mathbb|begin|end|\\\\[a-zA-Z]|\^[{0-9(@]|_[{0-9(]|[a-z]\^[0-9]|[a-z]_[0-9]|>=|<=|!=|->|=>|xx|\+-|oo|RR|QQ|ZZ|NN|CC|AA|EE|[\w)]\s*\/\s*[\w(]|\|[^|]+\||[A-Za-z]'+\(|\b(?:Delta|Gamma|Theta|Lambda|Sigma|Phi|Psi|Omega|epsilon|lambda|mu|rho|tau|phi|psi)\b)/;
 
 function looksLikeAsciiMath(content) {
     if (!content || content.length > 500) return false;
