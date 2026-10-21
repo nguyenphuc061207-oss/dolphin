@@ -29,25 +29,59 @@ import {
 
 import { storageOperation } from '@/shared/utils/runtimeSafety';
 import { validateQuestions } from '../utils/examSafety';
+import { TYPE_LABELS, isTypedType } from '../utils/questionEditing';
 import { getExamInfo, startAttempt, saveAnswers, submitAttempt } from '../services/examApi';
 import { readExamProgress, removeExamProgress } from '../utils/examProgress';
 import { normalizeFlow, pageOf, pageStart, pageEnd, describeFlow } from '../utils/examFlow';
 
 // ── Helpers ──────────────────────────────────────────────
-const TYPE_LABELS = {
-  single:           { label: 'Trắc nghiệm', color: 'bg-blue-100 text-blue-700' },
-  multiple:         { label: 'Chọn nhiều',  color: 'bg-purple-100 text-purple-700' },
-  true_false:       { label: 'Đúng/Sai',   color: 'bg-amber-100 text-amber-700' },
-  multi_true_false: { label: 'Đúng/Sai Nhiều Ý', color: 'bg-orange-100 text-orange-700' },
-  essay:            { label: 'Tự luận',    color: 'bg-emerald-100 text-emerald-700' },
-};
-
 /** Whether a question has been answered (any type) */
 function isAnswered(answer, type) {
   if (type === 'essay') return typeof answer === 'string' && answer.trim() !== '';
+  if (type === 'short_answer') return typeof answer?.value === 'string' && answer.value.trim() !== '';
   if (type === 'multiple') return Array.isArray(answer) && answer.length > 0;
   if (type === 'multi_true_false') return Array.isArray(answer) && answer.some(v => v !== null && v !== undefined);
   return answer !== undefined && answer !== null;
+}
+
+/** Typed answer of a short-answer question: the value plus a unit picked from the question's list. */
+function ShortAnswerInput({ id, question, answer, fontSize, onChange }) {
+  const value = typeof answer?.value === 'string' ? answer.value : '';
+  const unit = Number.isInteger(answer?.unit) ? answer.unit : null;
+  const numeric = question.answerKind === 'number';
+  const units = question.units || [];
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor={id} className="text-sm font-bold text-gray-700">Đáp án:</label>
+        <input
+          id={id}
+          value={value}
+          onChange={(e) => onChange({ value: e.target.value })}
+          inputMode={numeric ? 'decimal' : undefined}
+          autoComplete="off"
+          maxLength={500}
+          placeholder={numeric ? 'VD: 12,5' : 'Nhập đáp án…'}
+          className="flex-1 min-w-[10rem] max-w-md px-4 py-2.5 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent exam-text bg-gray-50 transition-shadow"
+          style={{ fontSize: `${fontSize}px` }}
+        />
+        {units.length > 0 && (
+          <select
+            value={unit ?? ''}
+            onChange={(e) => onChange({ unit: e.target.value === '' ? null : Number(e.target.value) })}
+            aria-label="Đơn vị"
+            className="w-32 px-3 py-2.5 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-cyan-400 bg-white text-sm"
+          >
+            <option value="">Đơn vị…</option>
+            {units.map((u, ui) => <option key={ui} value={ui}>{u}</option>)}
+          </select>
+        )}
+      </div>
+      {units.length > 0 && value.trim() && unit === null && (
+        <p className="mt-2 text-xs font-semibold text-amber-600" role="status">Bạn chưa chọn đơn vị – câu trả lời sẽ bị tính sai nếu thiếu đơn vị.</p>
+      )}
+    </div>
+  );
 }
 
 /** Toggle index in a multiple-choice answer array */
@@ -331,6 +365,11 @@ export default function TakeExam() {
     // eslint-disable-next-line react-hooks/purity
     if (isSubmittingRef.current || submissionAttempted || timeLeft <= 0 || Date.now() + serverOffsetRef.current >= deadline || (monitored && (isInterrupted || security.blocked()))) return;
     setUserAnswers((p) => ({ ...p, [qi]: text }));
+  };
+
+  const handleShortAnswerChange = (qi, patch) => {
+    if (isSubmittingRef.current || submissionAttempted || timeLeft <= 0 || Date.now() + serverOffsetRef.current >= deadline || (monitored && (isInterrupted || security.blocked()))) return;
+    setUserAnswers((p) => ({ ...p, [qi]: { value: '', unit: null, ...(p[qi] && typeof p[qi] === 'object' ? p[qi] : {}), ...patch } }));
   };
 
   const toggleFlag = (i) => setFlaggedQuestions((p) => {
@@ -772,6 +811,10 @@ export default function TakeExam() {
                       <p className="text-[11px] text-gray-400 mb-2 flex items-center gap-1">
                         <PenLine className="w-3 h-3" /> Viết câu trả lời của bạn vào ô bên dưới
                       </p>
+                    ) : qType === 'short_answer' ? (
+                      <p className="text-[11px] text-gray-400 mb-2 flex items-center gap-1">
+                        <PenLine className="w-3 h-3" /> {question.answerKind === 'number' ? 'Nhập đáp án là một số (dùng dấu phẩy hoặc dấu chấm cho phần thập phân)' : 'Nhập đáp án ngắn gọn'}{question.units?.length ? ' và chọn đơn vị' : ''}
+                      </p>
                     ) : qType === 'multiple' ? (
                       <p className="text-[11px] text-gray-400 text-center mb-3">Chọn tất cả đáp án đúng (có thể chọn nhiều)</p>
                     ) : (
@@ -791,8 +834,13 @@ export default function TakeExam() {
                     />
                   )}
 
+                  {/* ── SHORT ANSWER: value + optional unit ── */}
+                  {qType === 'short_answer' && (
+                    <ShortAnswerInput id={`answer-${qi}`} question={question} answer={currentAnswer} fontSize={fontSize} onChange={(patch) => handleShortAnswerChange(qi, patch)} />
+                  )}
+
                   {/* ── SINGLE / TRUE-FALSE / MULTIPLE / MULTI-TRUE-FALSE ── */}
-                  {qType !== 'essay' && (
+                  {!isTypedType(qType) && (
                     <div className={`grid gap-3 ${isShortOptions(question.options) ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"}`}>
                       {question.options.map((opt, oi) => {
                         if (opt === undefined) return null;

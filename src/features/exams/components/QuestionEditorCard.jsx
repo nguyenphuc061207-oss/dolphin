@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Plus, Trash2, ChevronUp, ChevronDown, Check } from 'lucide-react';
 import RichTextEditor from '@/shared/components/RichTextEditor';
 import { normalizeExplanation } from '@/shared/utils/richText';
-import { TYPE_OPTIONS, convertQuestionType } from '../utils/questionEditing';
+import { TYPE_OPTIONS, convertQuestionType, isTypedType } from '../utils/questionEditing';
+import ShortAnswerEditor from './ShortAnswerEditor';
 
 /**
  * Edits one question in place: content, type, options (rich text), correct answer, explanation.
@@ -76,7 +77,9 @@ export default function QuestionEditorCard({ question, onChange, onDone, onDelet
 
             <RichTextEditor value={q.content} onChange={(v) => set({ content: v })} placeholder="Nội dung câu hỏi…" minHeight={72} />
 
-            {type !== 'essay' && (
+            {type === 'short_answer' && <ShortAnswerEditor question={q} onChange={set} />}
+
+            {!isTypedType(type) && (
                 <div className="space-y-2">
                     {options.map((opt, i) => {
                         const isMulti = type === 'multiple';

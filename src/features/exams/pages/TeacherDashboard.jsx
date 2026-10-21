@@ -16,7 +16,8 @@ import { Link } from "react-router-dom";
 import { parseQuestionsFromHtml } from "../parsers/questionParser";
 import { extractTxtToHtml, plainTextToHtml } from "../parsers/txtExtractor";
 import QuestionEditorCard, { MoveButtons } from "../components/QuestionEditorCard";
-import { convertQuestionType, getQuestionIssues } from "../utils/questionEditing";
+import { convertQuestionType, getQuestionIssues, TYPE_LABELS, TYPE_OPTIONS, isTypedType, EMPTY_SHORT_ANSWER, normalizeShortAnswer, describeShortAnswer } from "../utils/questionEditing";
+import ShortAnswerEditor from "../components/ShortAnswerEditor";
 import RichTextEditor from "@/shared/components/RichTextEditor";
 import { htmlToPlain, normalizeQuestionExplanation, normalizeExplanation } from "@/shared/utils/richText";
 import RichTextRenderer from "@/shared/components/RichTextRenderer";
@@ -54,23 +55,6 @@ const loadPdfjs = async () => {
     pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
     return pdfjsLib;
 };
-
-// ── Question type metadata ────────────────────────────────────────────
-const TYPE_LABELS = {
-    single: { label: 'Trắc nghiệm', color: 'bg-blue-100 text-blue-700 border-blue-200' },
-    multiple: { label: 'Chọn nhiều', color: 'bg-purple-100 text-purple-700 border-purple-200' },
-    true_false: { label: 'Đúng/Sai', color: 'bg-amber-100 text-amber-700 border-amber-200' },
-    multi_true_false: { label: 'Đúng/Sai Nhiều Ý', color: 'bg-orange-100 text-orange-700 border-orange-200' },
-    essay: { label: 'Tự luận', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
-};
-
-const TYPE_OPTIONS = [
-    { value: 'single', label: 'Trắc nghiệm (1 đáp án)' },
-    { value: 'multiple', label: 'Chọn nhiều' },
-    { value: 'true_false', label: 'Đúng / Sai' },
-    { value: 'multi_true_false', label: 'Đúng / Sai Nhiều Ý' },
-    { value: 'essay', label: 'Tự luận' },
-];
 
 const isShortOptions = (options) => {
     if (!options || options.length === 0) return false;
@@ -185,6 +169,7 @@ export default function TeacherDashboard() {
     const [correctAnswer, setCorrectAnswer] = useState(0);
     const [manualExplanation, setManualExplanation] = useState("");
     const [scoringMethod, setScoringMethod] = useState("linear");
+    const [shortAnswer, setShortAnswer] = useState(EMPTY_SHORT_ANSWER);
     const [importText, setImportText] = useState("");
     const [isFileProcessing, setIsFileProcessing] = useState(false);
     const [fileError, setFileError] = useState('');
@@ -489,7 +474,7 @@ export default function TeacherDashboard() {
 
     const handleManualTypeChange = (newType) => {
         setManualType(newType);
-        if (newType === 'essay') {
+        if (isTypedType(newType)) {
             setOptions([]);
             setCorrectAnswer('');
         } else if (newType === 'true_false') {
@@ -528,30 +513,35 @@ export default function TeacherDashboard() {
         if (!htmlToPlain(currentQText).trim() && !currentQText.includes('[IMG:')) {
             return alert("Vui lòng nhập nội dung câu hỏi!");
         }
-        if (manualType !== 'essay' && options.some(opt => !htmlToPlain(opt).trim() && !opt.includes('[IMG:'))) {
+        if (!isTypedType(manualType) && options.some(opt => !htmlToPlain(opt).trim() && !opt.includes('[IMG:'))) {
             return alert("Vui lòng điền đầy đủ nội dung cho các đáp án!");
+        }
+        if (manualType === 'short_answer') {
+            const issue = getQuestionIssues({ ...shortAnswer, type: 'short_answer', content: currentQText })[0];
+            if (issue) return alert(issue);
         }
         if (manualType === 'multiple' && (!Array.isArray(correctAnswer) || correctAnswer.length === 0)) {
             return alert("Vui lòng chọn ít nhất một đáp án đúng!");
         }
 
         const explanation = normalizeExplanation(manualExplanation);
-        setQuestions([
-            ...questions,
-            {
+        const question = manualType === 'short_answer'
+            ? normalizeShortAnswer({ ...shortAnswer, content: currentQText, type: manualType })
+            : {
                 content: currentQText,
                 options: manualType === 'essay' ? [] : options,
                 correctAnswer: correctAnswer,
                 type: manualType,
                 ...(manualType === 'multi_true_false' && { scoringMethod }),
-                ...(explanation && { explanation })
-            }
-        ]);
+            };
+        setQuestions([...questions, { ...question, ...(explanation && { explanation }) }]);
 
         // Reset form
         setCurrentQText("");
         setManualExplanation("");
-        if (manualType === 'essay') {
+        // Short answers keep their kind, units and tolerance: consecutive questions usually share them.
+        setShortAnswer(s => ({ ...s, acceptedAnswers: [''] }));
+        if (isTypedType(manualType)) {
             setOptions([]);
             setCorrectAnswer('');
         } else if (manualType === 'true_false') {
@@ -792,8 +782,9 @@ const handleSaveExam = async () => {
     saveInFlightRef.current = true;
     setIsSubmitting(true);
     try {
-        validateQuestions(questions);
-        const { questions: finalQuestions, imageDeleteUrls } = await uploadAllImagesInQuestions(questions.map(normalizeQuestionExplanation));
+        const prepared = questions.map(q => normalizeShortAnswer(normalizeQuestionExplanation(q)));
+        validateQuestions(prepared);
+        const { questions: finalQuestions, imageDeleteUrls } = await uploadAllImagesInQuestions(prepared);
 
         await publishExam({
             teacherId: currentUser.uid,
@@ -980,6 +971,7 @@ return (
                                                 { value: 'multiple', label: 'Chọn nhiều' },
                                                 { value: 'true_false', label: 'Đúng / Sai' },
                                                 { value: 'multi_true_false', label: 'Đúng / Sai Nhiều Ý' },
+                                                { value: 'short_answer', label: 'Điền đáp án' },
                                                 { value: 'essay', label: 'Tự luận' }
                                             ].map(opt => (
                                                 <button
@@ -1020,8 +1012,12 @@ return (
                                             </div>
                                         )}
 
+                                        {manualType === 'short_answer' && (
+                                            <ShortAnswerEditor question={shortAnswer} onChange={patch => setShortAnswer(s => ({ ...s, ...patch }))} />
+                                        )}
+
                                         {/* Câu hỏi có đáp án lựa chọn */}
-                                        {manualType !== 'essay' && (
+                                        {!isTypedType(manualType) && (
                                             <div className="space-y-4">
                                                 <p className="text-[10px] font-black uppercase tracking-wider text-gray-400">
                                                     Danh sách đáp án (Tick chọn đáp án đúng):
@@ -1263,7 +1259,11 @@ return (
                                                             </div>
                                                         </div>
                                                         {/* Essay: show placeholder */}
-                                                        {isEssay ? (
+                                                        {qType === 'short_answer' ? (
+                                                            <div className="text-xs px-3 py-2 bg-emerald-50 border border-emerald-300 text-emerald-800 font-bold rounded-lg">
+                                                                Đáp án: {describeShortAnswer(q)}
+                                                            </div>
+                                                        ) : isEssay ? (
                                                             <div className="text-xs italic text-gray-400 px-2 py-3 bg-white border border-dashed border-gray-200 rounded-lg">
                                                                 (Câu hỏi tự luận — học sinh sẽ điền câu trả lời khi làm bài)
                                                             </div>
@@ -1362,7 +1362,12 @@ return (
                                                             <div className="text-sm font-semibold text-gray-800 max-h-28 overflow-hidden">
                                                                 <RichTextRenderer content={q.content} mathDict={mathDictionary} />
                                                             </div>
-                                                            {qType !== 'essay' && (
+                                                            {qType === 'short_answer' && (
+                                                                <div className="mt-2 text-[11px] px-2 py-0.5 rounded-md border bg-emerald-50 border-emerald-300 text-emerald-800 font-bold inline-block">
+                                                                    Đáp án: {describeShortAnswer(q)}
+                                                                </div>
+                                                            )}
+                                                            {!isTypedType(qType) && (
                                                                 <div className="mt-2 flex flex-wrap gap-1.5">
                                                                     {(q.options || []).map((opt, oi) => {
                                                                         const ok = qType === 'multi_true_false'

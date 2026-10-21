@@ -1,7 +1,8 @@
 import QuestionExplanation from '../components/QuestionExplanation';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import { withTimeout } from '@/shared/utils/runtimeSafety';
-import { validateQuestions } from '../utils/examSafety';
+import { validateQuestions, scoreQuestion } from '../utils/examSafety';
+import { TYPE_LABELS, isTypedType, describeShortAnswer, formatShortAnswer } from '../utils/questionEditing';
 import { ownsExam, accessErrorMessage } from '../utils/examAccess';
 import { useState, useEffect } from "react";
 import { useParams, Link, useLocation, useNavigate } from "react-router-dom";
@@ -9,18 +10,11 @@ import { getReview } from '../services/examApi';
 import { AlertTriangle, CheckCircle2, XCircle, PenLine } from "lucide-react";
 import RichTextRenderer from "@/shared/components/RichTextRenderer";
 
-const TYPE_LABELS = {
-    single:           { label: 'Trắc nghiệm', color: 'bg-blue-100 text-blue-700' },
-    multiple:         { label: 'Chọn nhiều',  color: 'bg-purple-100 text-purple-700' },
-    true_false:       { label: 'Đúng/Sai',   color: 'bg-amber-100 text-amber-700' },
-    multi_true_false: { label: 'Đúng/Sai Nhiều Ý', color: 'bg-orange-100 text-orange-700' },
-    essay:            { label: 'Tự luận',    color: 'bg-emerald-100 text-emerald-700' },
-};
-
 /** Check correctness for any question type */
 function checkCorrect(q, studentAns) {
     const type = q.type || 'single';
     if (type === 'essay') return null; // not auto-gradable
+    if (type === 'short_answer') return scoreQuestion(q, studentAns) === 1;
     if (type === 'multiple') {
         const ca = Array.isArray(q.correctAnswer) ? [...q.correctAnswer].map(Number).sort((a, b) => a - b).join(',') : '';
         const sa = Array.isArray(studentAns) ? [...studentAns].map(Number).sort((a, b) => a - b).join(',') : '';
@@ -255,6 +249,22 @@ export default function ReviewExam() {
                                         </div>
                                     )}
 
+                                    {/* ── SHORT ANSWER: typed answer next to the key ── */}
+                                    {qType === 'short_answer' && (
+                                        <div className="grid gap-3 sm:grid-cols-2">
+                                            <div className={`rounded-2xl p-4 border ${result ? 'bg-emerald-50 border-emerald-500 text-emerald-900' : 'bg-red-50 border-red-500 text-red-900'}`}>
+                                                <p className="text-[10px] font-black uppercase tracking-wider mb-1 opacity-70">Câu trả lời của bạn</p>
+                                                <p className="exam-text text-sm font-bold break-words">
+                                                    {formatShortAnswer(studentChoice, question.units) || <span className="italic font-normal opacity-70">(Không có câu trả lời)</span>}
+                                                </p>
+                                            </div>
+                                            <div className="rounded-2xl p-4 border bg-emerald-50 border-emerald-200 text-emerald-900">
+                                                <p className="text-[10px] font-black uppercase tracking-wider mb-1 opacity-70">Đáp án đúng</p>
+                                                <p className="exam-text text-sm font-bold break-words">{describeShortAnswer(question)}</p>
+                                            </div>
+                                        </div>
+                                    )}
+
                                     {/* ── MULTI-TRUE-FALSE: scoring method info ── */}
                                     {qType === 'multi_true_false' && (
                                         <div className="flex items-center gap-2 p-3 bg-orange-50 rounded-xl border border-orange-100 mb-4 mt-2">
@@ -271,7 +281,7 @@ export default function ReviewExam() {
                                     )}
 
                                     {/* ── SINGLE / MULTIPLE / TRUE-FALSE / MULTI-TRUE-FALSE: options grid ── */}
-                                    {!isEssay && (
+                                    {!isTypedType(qType) && (
                                         <div className={`grid gap-3 ${isShortOptions(question.options) ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"}`}>
                                             {question.options.map((option, oIndex) => {
                                                 const isMultiTF = qType === 'multi_true_false';
