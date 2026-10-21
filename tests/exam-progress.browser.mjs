@@ -8,6 +8,7 @@ const { chromium } = require(process.argv[2] || 'playwright');
 
 const firestore = `
 export const db = {};
+export const auth = {};
 export const collection = (_, name) => ({name});
 export const doc = (_, name, id) => ({name: name || _.name, id: id || 'attempt-fixture'});
 export const where = (field, op, value) => ({field, op, value});
@@ -60,10 +61,15 @@ export const getReview=async()=>{const sub=JSON.parse(localStorage.getItem('test
 const server = await createServer({ server: {host:'127.0.0.1',port:0}, plugins:[{
   name: 'exam-progress-fixtures', enforce: 'pre',
   resolveId(id) {
+    if (id === 'firebase/auth') return '\0auth-fixture';
     if (/\/services\/examApi(?:\.js)?$/.test(id.replaceAll('\\', '/')) || id === '../services/examApi') return '\0exam-api-fixture';
     if (id === 'firebase/firestore' || /\/src\/shared\/config\/firebase(?:\.js)?$/.test(id.replaceAll('\\', '/'))) return '\0exam-fixtures';
   },
-  load(id) { if (id === '\0exam-fixtures') return firestore; if(id === '\0exam-api-fixture') return apiFixture; },
+  load(id) {
+    if (id === '\0auth-fixture') return 'export const signOut = async () => {};';
+    if (id === '\0exam-fixtures') return firestore;
+    if (id === '\0exam-api-fixture') return apiFixture;
+  },
   configureServer(server) {
     server.middlewares.use('/__exam-progress', async (_req,res) => {
       res.setHeader('Content-Type','text/html');
