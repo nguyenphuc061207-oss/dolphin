@@ -1,3 +1,4 @@
+import katex from 'katex';
 import { convertAsciiMathToLatex, isCodeCallAt, restoreCodeCalls } from './asciiMathParser';
 import { extractMathMLFromText } from './mathmlParser';
 
@@ -60,7 +61,7 @@ export function normalizeUnicodeToLatex(text) {
   if (!text) return text;
   
   // Regex to match existing math blocks ($...$, $$...$$, \(...\), \[...\]) and images
-  const mathRegex = /(\$\$[\s\S]*?\$\$|\$[^$\n]*?\$|\\\[[\s\S]*?\\\]|\\\(.*?\\\)|\[IMG:\s*data:[^\]]+\])/g;
+  const mathRegex = /(\$\$[\s\S]*?\$\$|\$[^$\n]*?\$|\\\[[\s\S]*?\\\]|\\\(.*?\\\)|\[IMG:\s*(?:data:|https?:\/\/)[^\]]+\])/g;
 
   // Pre-pass: convert MathML and AsciiMath to LaTeX before splitting
   let preprocessed = extractMathMLFromText(restoreCodeCalls(text));
@@ -152,8 +153,8 @@ export function hasBareUnicode(text) {
 export function tokenizeMath(text) {
   if (!text) return [];
   const tokens = [];
-  // Match $$...$$ (block), $...$ (inline), and [IMG: ...] (image)
-  const regex = /(\$\$[\s\S]*?\$\$|\$[^$\n]*?\$|\[IMG:\s*data:[^\]]+\])/g;
+  // Match $$...$$ (block), $...$ (inline), and [IMG: ...] (image: embedded, or uploaded when the exam was saved)
+  const regex = /(\$\$[\s\S]*?\$\$|\$[^$\n]*?\$|\[IMG:\s*(?:data:|https?:\/\/)[^\]]+\])/g;
   let lastIndex = 0;
   let match;
 
@@ -192,6 +193,31 @@ export function repairEatenEscapes(math) {
   return math.replace(/\\?([\b\t\v\f\r])(?=[A-Za-z])/g, (m, ch) => `\\${EATEN_ESCAPES[ch]}`);
 }
 
+// Soft hyphen, zero-width space/joiners, word joiner, BOM; then "\t imes" (space or no-break space).
+const INVISIBLE = new RegExp('[' + String.fromCharCode(0xAD, 0x200B) + '-' + String.fromCharCode(0x200D, 0x2060, 0xFEFF) + ']', 'g');
+const SPLIT_COMMAND = new RegExp('\\\\([A-Za-z])[ ' + String.fromCharCode(0xA0) + ']+([A-Za-z]+)', 'g');
+
+const KATEX_OK = new Map();
+const katexParses = (latex) => {
+  if (!KATEX_OK.has(latex)) {
+    let ok = true;
+    try { katex.renderToString(latex, { throwOnError: true, strict: 'ignore' }); } catch { ok = false; }
+    KATEX_OK.set(latex, ok);
+  }
+  return KATEX_OK.get(latex);
+};
+
+/**
+ * A command cut after its first letter by a space or an invisible character ("\t imes", "\l<ZWSP>eftarrow")
+ * shows a red "\t". Join it when the split form does not parse and the joined one is a real command.
+ */
+export function joinSplitCommands(math) {
+  return math
+    .replace(INVISIBLE, '')
+    .replace(SPLIT_COMMAND, (m, head, rest) => (
+      !katexParses(`\\${head} ${rest}`) && katexParses(`\\${head}${rest}`) ? `\\${head}${rest}` : m));
+}
+
 /**
  * Clean up weird symbols produced by Mammoth/Word conversion
  */
@@ -203,7 +229,7 @@ export function normalizeWordMangledMath(text) {
 
   // Only touch text that is already inside $...$ – plain prose such as "(km/h)",
   // "@123" or "37°C" must stay exactly as the teacher typed it.
-  const cleanMath = (m) => repairEatenEscapes(m)
+  const cleanMath = (m) => joinSplitCommands(repairEatenEscapes(m))
     .replace(/°C/g, '^{\\circ}C')
     .replace(/°/g, '^{\\circ}')
     .replace(/log_(\d+)/gi, '\\log_{$1}')

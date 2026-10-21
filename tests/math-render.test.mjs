@@ -132,3 +132,17 @@ test('LaTeX whose backslash escapes were eaten by a JSON/JS string still renders
   // Prose outside math keeps its tabs and line breaks.
   assert.equal(mu.normalizeWordMangledMath('a\tb\r\nc'), 'a\tb\r\nc');
 });
+
+test('a command cut after its first letter is joined again, real single-letter commands stay', () => {
+  for (const [broken, latex] of [['$\\t imes$', '\\times'], ['$AL \\l\u200Beftarrow$', 'AL \\leftarrow'], ['$\\f\u00ADrac{1}{2}$', '\\frac{1}{2}'], ['$\\S ection$', '\\S ection'], ['$a \\le b$', 'a \\le b']]) {
+    const [token] = mu.tokenizeMath(mu.normalizeWordMangledMath(broken)).filter((t) => t.type === 'inline');
+    assert.equal(token.content, latex);
+    assert.doesNotThrow(() => katex.renderToString(token.content));
+  }
+});
+
+test('pictures uploaded when the exam was saved render as images, not text', () => {
+  const tokens = mu.tokenizeMath(mu.normalizeUnicodeToLatex('Hình 4:<br>[IMG: https://i.ibb.co/a_b/fig^4.png]'));
+  assert.deepEqual(tokens.filter((t) => t.type === 'image').map((t) => t.content), ['https://i.ibb.co/a_b/fig^4.png']);
+  assert.equal(mu.tokenizeMath('[IMG: javascript:alert(1)]')[0].type, 'text');
+});

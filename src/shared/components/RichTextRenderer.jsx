@@ -64,7 +64,7 @@ function domToReact(node, mathDict, inCode, key) {
   if (isBlockCode) {
     // Older imports boxed a picture line as code; a block holding only pictures is a picture.
     const listing = codeText(node);
-    if (/^\s*(?:\[IMG:\s*data:[^\]]+\]\s*)+$/.test(listing)) {
+    if (/^\s*(?:\[IMG:\s*(?:data:|https?:\/\/)[^\]]+\]\s*)+$/.test(listing)) {
       return <React.Fragment key={key}>{renderPlain(listing.trim(), mathDict, `${key}-`)}</React.Fragment>;
     }
     // Tokenize the whole listing, including Word runs, so strings/comments spanning
