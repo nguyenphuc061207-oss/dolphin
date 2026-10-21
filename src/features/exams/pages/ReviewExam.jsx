@@ -2,7 +2,7 @@ import QuestionExplanation from '../components/QuestionExplanation';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import { withTimeout } from '@/shared/utils/runtimeSafety';
 import { validateQuestions, scoreQuestion } from '../utils/examSafety';
-import { TYPE_LABELS, isTypedType, describeShortAnswer, formatShortAnswer } from '../utils/questionEditing';
+import { TYPE_LABELS, hasOptionList, describeShortAnswer, formatShortAnswer, dropdownKey } from '../utils/questionEditing';
 import { ownsExam, accessErrorMessage } from '../utils/examAccess';
 import { useState, useEffect } from "react";
 import { useParams, Link, useLocation, useNavigate } from "react-router-dom";
@@ -14,7 +14,7 @@ import RichTextRenderer from "@/shared/components/RichTextRenderer";
 function checkCorrect(q, studentAns) {
     const type = q.type || 'single';
     if (type === 'essay') return null; // not auto-gradable
-    if (type === 'short_answer') return scoreQuestion(q, studentAns) === 1;
+    if (type === 'short_answer' || type === 'dropdown') return scoreQuestion(q, studentAns) === 1;
     if (type === 'multiple') {
         const ca = Array.isArray(q.correctAnswer) ? [...q.correctAnswer].map(Number).sort((a, b) => a - b).join(',') : '';
         const sa = Array.isArray(studentAns) ? [...studentAns].map(Number).sort((a, b) => a - b).join(',') : '';
@@ -265,6 +265,33 @@ export default function ReviewExam() {
                                         </div>
                                     )}
 
+                                    {/* ── DROPDOWN: each row's pick next to its key ── */}
+                                    {qType === 'dropdown' && (() => {
+                                        const key = dropdownKey(question);
+                                        const rowsRight = question.options.filter((_, ri) => Array.isArray(studentChoice) && studentChoice[ri] != null && Number(studentChoice[ri]) === Number(question.correctAnswer[ri])).length;
+                                        return (
+                                            <div className="space-y-2">
+                                                <p className="text-xs font-bold text-indigo-800">
+                                                    Đúng {rowsRight}/{question.options.length} dòng · {question.scoringMethod === 'all' ? 'phải đúng tất cả các dòng mới có điểm' : 'chấm theo tỉ lệ số dòng đúng'}
+                                                </p>
+                                                {question.options.map((row, ri) => {
+                                                    const pick = Array.isArray(studentChoice) && Number.isInteger(studentChoice[ri]) ? studentChoice[ri] : null;
+                                                    const ok = pick !== null && pick === Number(question.correctAnswer[ri]);
+                                                    return (
+                                                        <div key={ri} className={`flex flex-wrap items-center gap-x-4 gap-y-1 p-3 rounded-2xl border ${ok ? 'bg-emerald-50 border-emerald-500 text-emerald-900' : 'bg-red-50 border-red-500 text-red-900'}`}>
+                                                            <div className="exam-text text-sm flex-1 min-w-0"><RichTextRenderer content={row} mathDict={submission.mathDictionary} /></div>
+                                                            <span className="text-sm font-bold flex items-center gap-1">
+                                                                {ok ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                                                                {pick !== null ? question.choices[pick] : <i className="font-normal opacity-70">Chưa chọn</i>}
+                                                            </span>
+                                                            {!ok && <span className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">Đáp án: {key[ri]}</span>}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        );
+                                    })()}
+
                                     {/* ── MULTI-TRUE-FALSE: scoring method info ── */}
                                     {qType === 'multi_true_false' && (
                                         <div className="flex items-center gap-2 p-3 bg-orange-50 rounded-xl border border-orange-100 mb-4 mt-2">
@@ -281,7 +308,7 @@ export default function ReviewExam() {
                                     )}
 
                                     {/* ── SINGLE / MULTIPLE / TRUE-FALSE / MULTI-TRUE-FALSE: options grid ── */}
-                                    {!isTypedType(qType) && (
+                                    {hasOptionList(qType) && (
                                         <div className={`grid gap-3 ${isShortOptions(question.options) ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"}`}>
                                             {question.options.map((option, oIndex) => {
                                                 const isMultiTF = qType === 'multi_true_false';

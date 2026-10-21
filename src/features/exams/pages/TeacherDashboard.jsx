@@ -16,8 +16,9 @@ import { Link } from "react-router-dom";
 import { parseQuestionsFromHtml } from "../parsers/questionParser";
 import { extractTxtToHtml, plainTextToHtml } from "../parsers/txtExtractor";
 import QuestionEditorCard, { MoveButtons } from "../components/QuestionEditorCard";
-import { convertQuestionType, getQuestionIssues, TYPE_LABELS, TYPE_OPTIONS, isTypedType, EMPTY_SHORT_ANSWER, normalizeShortAnswer, describeShortAnswer } from "../utils/questionEditing";
+import { convertQuestionType, getQuestionIssues, TYPE_LABELS, TYPE_OPTIONS, hasOptionList, EMPTY_SHORT_ANSWER, EMPTY_DROPDOWN, normalizeQuestion, describeShortAnswer, dropdownKey } from "../utils/questionEditing";
 import ShortAnswerEditor from "../components/ShortAnswerEditor";
+import DropdownEditor from "../components/DropdownEditor";
 import RichTextEditor from "@/shared/components/RichTextEditor";
 import { htmlToPlain, normalizeQuestionExplanation, normalizeExplanation } from "@/shared/utils/richText";
 import RichTextRenderer from "@/shared/components/RichTextRenderer";
@@ -55,6 +56,22 @@ const loadPdfjs = async () => {
     pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
     return pdfjsLib;
 };
+
+/** Each dropdown row with its right choice, for the teacher's preview and question list. */
+function DropdownKeyList({ question, mathDict }) {
+    const key = dropdownKey(question);
+    return (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+            {(question.options || []).map((row, i) => (
+                <span key={i} className="text-[11px] px-2 py-0.5 rounded-md border bg-gray-50 border-gray-200 text-gray-600 flex items-baseline gap-1">
+                    {row ? <RichTextRenderer content={row} mathDict={mathDict} /> : <i className="text-gray-300">Trống</i>}
+                    <span aria-hidden="true">→</span>
+                    <b className={key[i] ? 'text-emerald-700' : 'text-red-500'}>{key[i] || 'chưa chọn'}</b>
+                </span>
+            ))}
+        </div>
+    );
+}
 
 const isShortOptions = (options) => {
     if (!options || options.length === 0) return false;
@@ -170,6 +187,7 @@ export default function TeacherDashboard() {
     const [manualExplanation, setManualExplanation] = useState("");
     const [scoringMethod, setScoringMethod] = useState("linear");
     const [shortAnswer, setShortAnswer] = useState(EMPTY_SHORT_ANSWER);
+    const [dropdown, setDropdown] = useState(EMPTY_DROPDOWN);
     const [importText, setImportText] = useState("");
     const [isFileProcessing, setIsFileProcessing] = useState(false);
     const [fileError, setFileError] = useState('');
@@ -474,7 +492,7 @@ export default function TeacherDashboard() {
 
     const handleManualTypeChange = (newType) => {
         setManualType(newType);
-        if (isTypedType(newType)) {
+        if (!hasOptionList(newType)) {
             setOptions([]);
             setCorrectAnswer('');
         } else if (newType === 'true_false') {
@@ -513,11 +531,12 @@ export default function TeacherDashboard() {
         if (!htmlToPlain(currentQText).trim() && !currentQText.includes('[IMG:')) {
             return alert("Vui lòng nhập nội dung câu hỏi!");
         }
-        if (!isTypedType(manualType) && options.some(opt => !htmlToPlain(opt).trim() && !opt.includes('[IMG:'))) {
+        if (hasOptionList(manualType) && options.some(opt => !htmlToPlain(opt).trim() && !opt.includes('[IMG:'))) {
             return alert("Vui lòng điền đầy đủ nội dung cho các đáp án!");
         }
-        if (manualType === 'short_answer') {
-            const issue = getQuestionIssues({ ...shortAnswer, type: 'short_answer', content: currentQText })[0];
+        const ownFields = manualType === 'short_answer' ? shortAnswer : manualType === 'dropdown' ? dropdown : null;
+        if (ownFields) {
+            const issue = getQuestionIssues({ ...ownFields, type: manualType, content: currentQText })[0];
             if (issue) return alert(issue);
         }
         if (manualType === 'multiple' && (!Array.isArray(correctAnswer) || correctAnswer.length === 0)) {
@@ -525,8 +544,8 @@ export default function TeacherDashboard() {
         }
 
         const explanation = normalizeExplanation(manualExplanation);
-        const question = manualType === 'short_answer'
-            ? normalizeShortAnswer({ ...shortAnswer, content: currentQText, type: manualType })
+        const question = ownFields
+            ? normalizeQuestion({ ...ownFields, content: currentQText, type: manualType })
             : {
                 content: currentQText,
                 options: manualType === 'essay' ? [] : options,
@@ -541,7 +560,9 @@ export default function TeacherDashboard() {
         setManualExplanation("");
         // Short answers keep their kind, units and tolerance: consecutive questions usually share them.
         setShortAnswer(s => ({ ...s, acceptedAnswers: [''] }));
-        if (isTypedType(manualType)) {
+        // Dropdowns keep their choices, row count and scoring; rows and keys are cleared.
+        setDropdown(d => ({ ...d, options: d.options.map(() => ''), correctAnswer: d.options.map(() => null) }));
+        if (!hasOptionList(manualType)) {
             setOptions([]);
             setCorrectAnswer('');
         } else if (manualType === 'true_false') {
@@ -782,7 +803,7 @@ const handleSaveExam = async () => {
     saveInFlightRef.current = true;
     setIsSubmitting(true);
     try {
-        const prepared = questions.map(q => normalizeShortAnswer(normalizeQuestionExplanation(q)));
+        const prepared = questions.map(q => normalizeQuestion(normalizeQuestionExplanation(q)));
         validateQuestions(prepared);
         const { questions: finalQuestions, imageDeleteUrls } = await uploadAllImagesInQuestions(prepared);
 
@@ -971,6 +992,7 @@ return (
                                                 { value: 'multiple', label: 'Chọn nhiều' },
                                                 { value: 'true_false', label: 'Đúng / Sai' },
                                                 { value: 'multi_true_false', label: 'Đúng / Sai Nhiều Ý' },
+                                                { value: 'dropdown', label: 'Chọn từ danh sách' },
                                                 { value: 'short_answer', label: 'Điền đáp án' },
                                                 { value: 'essay', label: 'Tự luận' }
                                             ].map(opt => (
@@ -1015,9 +1037,12 @@ return (
                                         {manualType === 'short_answer' && (
                                             <ShortAnswerEditor question={shortAnswer} onChange={patch => setShortAnswer(s => ({ ...s, ...patch }))} />
                                         )}
+                                        {manualType === 'dropdown' && (
+                                            <DropdownEditor question={dropdown} onChange={patch => setDropdown(d => ({ ...d, ...patch }))} />
+                                        )}
 
                                         {/* Câu hỏi có đáp án lựa chọn */}
-                                        {!isTypedType(manualType) && (
+                                        {hasOptionList(manualType) && (
                                             <div className="space-y-4">
                                                 <p className="text-[10px] font-black uppercase tracking-wider text-gray-400">
                                                     Danh sách đáp án (Tick chọn đáp án đúng):
@@ -1263,6 +1288,8 @@ return (
                                                             <div className="text-xs px-3 py-2 bg-emerald-50 border border-emerald-300 text-emerald-800 font-bold rounded-lg">
                                                                 Đáp án: {describeShortAnswer(q)}
                                                             </div>
+                                                        ) : qType === 'dropdown' ? (
+                                                            <DropdownKeyList question={q} mathDict={mathDictionary} />
                                                         ) : isEssay ? (
                                                             <div className="text-xs italic text-gray-400 px-2 py-3 bg-white border border-dashed border-gray-200 rounded-lg">
                                                                 (Câu hỏi tự luận — học sinh sẽ điền câu trả lời khi làm bài)
@@ -1367,7 +1394,8 @@ return (
                                                                     Đáp án: {describeShortAnswer(q)}
                                                                 </div>
                                                             )}
-                                                            {!isTypedType(qType) && (
+                                                            {qType === 'dropdown' && <DropdownKeyList question={q} mathDict={mathDictionary} />}
+                                                            {hasOptionList(qType) && (
                                                                 <div className="mt-2 flex flex-wrap gap-1.5">
                                                                     {(q.options || []).map((opt, oi) => {
                                                                         const ok = qType === 'multi_true_false'

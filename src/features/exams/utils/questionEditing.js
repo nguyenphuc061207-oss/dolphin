@@ -6,6 +6,7 @@ export const TYPE_OPTIONS = [
     { value: 'multiple', label: 'Chọn nhiều' },
     { value: 'true_false', label: 'Đúng / Sai' },
     { value: 'multi_true_false', label: 'Đúng / Sai Nhiều Ý' },
+    { value: 'dropdown', label: 'Chọn từ danh sách' },
     { value: 'short_answer', label: 'Điền đáp án' },
     { value: 'essay', label: 'Tự luận' },
 ];
@@ -16,15 +17,18 @@ export const TYPE_LABELS = {
     multiple: { label: 'Chọn nhiều', color: 'bg-purple-100 text-purple-700 border-purple-200' },
     true_false: { label: 'Đúng/Sai', color: 'bg-amber-100 text-amber-700 border-amber-200' },
     multi_true_false: { label: 'Đúng/Sai Nhiều Ý', color: 'bg-orange-100 text-orange-700 border-orange-200' },
+    dropdown: { label: 'Chọn từ danh sách', color: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
     short_answer: { label: 'Điền đáp án', color: 'bg-cyan-100 text-cyan-700 border-cyan-200' },
     essay: { label: 'Tự luận', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
 };
 
-/** Types answered by typing rather than picking options. */
-export const isTypedType = (type) => type === 'essay' || type === 'short_answer';
+/** Types whose `options` are answer choices shown as a list (single, multiple, true/false). */
+export const hasOptionList = (type) => !['essay', 'short_answer', 'dropdown'].includes(type || 'single');
 
 const SHORT_ANSWER_FIELDS = ['answerKind', 'acceptedAnswers', 'tolerance', 'toleranceMode', 'caseSensitive', 'units', 'correctUnit', 'unitFactors'];
 export const EMPTY_SHORT_ANSWER = { answerKind: 'text', acceptedAnswers: [''] };
+/** Dropdown questions: `options` are the rows, `choices` the list every row picks from, `correctAnswer` one choice per row. */
+export const EMPTY_DROPDOWN = { options: ['', ''], choices: ['', ''], correctAnswer: [null, null], scoringMethod: 'partial' };
 
 const hasText = (v) => !!v && (htmlToPlain(String(v)).trim() !== '' || String(v).includes('[IMG:'));
 const filledAnswers = (q) => (Array.isArray(q.acceptedAnswers) ? q.acceptedAnswers : []).map((a) => String(a ?? '').trim()).filter(Boolean);
@@ -46,6 +50,26 @@ function shortAnswerIssues(q) {
     return issues;
 }
 
+const listLabels = (indexes) => indexes.map((i) => i + 1).join(', ');
+
+function dropdownIssues(q) {
+    const issues = [];
+    const rows = Array.isArray(q.options) ? q.options : [];
+    const choices = Array.isArray(q.choices) ? q.choices.map((c) => String(c ?? '').trim()) : [];
+    if (!rows.length) issues.push('Cần ít nhất 1 dòng');
+    const emptyRows = rows.map((r, i) => (hasText(r) ? null : i)).filter((i) => i !== null);
+    if (emptyRows.length) issues.push(`Dòng ${listLabels(emptyRows)} trống`);
+    if (choices.length < 2) issues.push('Cần ít nhất 2 lựa chọn');
+    const emptyChoices = choices.map((c, i) => (c ? null : i)).filter((i) => i !== null);
+    if (emptyChoices.length) issues.push(`Lựa chọn ${listLabels(emptyChoices)} trống`);
+    if (new Set(choices.filter(Boolean)).size < choices.filter(Boolean).length) issues.push('Có lựa chọn bị trùng');
+    const key = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
+    const unset = rows.map((_, i) => (Number.isInteger(key[i]) && key[i] >= 0 && key[i] < choices.length ? null : i)).filter((i) => i !== null);
+    if (unset.length) issues.push(`Chưa chọn đáp án cho dòng ${listLabels(unset)}`);
+    if (!issues.length && questionProblem(normalizeQuestion(q))) issues.push('Đáp án chưa hợp lệ');
+    return issues;
+}
+
 /** Human-readable problems that would make a question unusable or ungradable (empty list = OK). */
 export function getQuestionIssues(q) {
     const issues = [];
@@ -53,6 +77,7 @@ export function getQuestionIssues(q) {
     if (!hasText(q?.content)) issues.push('Thiếu nội dung câu hỏi');
     if (type === 'essay') return issues;
     if (type === 'short_answer') return issues.concat(shortAnswerIssues(q));
+    if (type === 'dropdown') return issues.concat(dropdownIssues(q));
     const options = q?.options || [];
     if (options.length < 2 && type !== 'multi_true_false') issues.push('Cần ít nhất 2 đáp án');
     const empty = options.map((o, i) => (hasText(o) ? null : String.fromCharCode(65 + i))).filter(Boolean);
@@ -81,6 +106,16 @@ export function normalizeShortAnswer(q) {
     return next;
 }
 
+/** A question as it is saved: short-answer and dropdown settings cleaned up, other types unchanged. */
+export function normalizeQuestion(q) {
+    if (q?.type === 'short_answer') return normalizeShortAnswer(q);
+    if (q?.type !== 'dropdown') return q;
+    return { ...q, choices: (q.choices || []).map((c) => String(c ?? '').trim()), scoringMethod: q.scoringMethod === 'all' ? 'all' : 'partial' };
+}
+
+/** The right choice of each dropdown row ('' when not set). */
+export const dropdownKey = (q) => (q.options || []).map((_, i) => q.choices?.[q.correctAnswer?.[i]] ?? '');
+
 /** One-line summary of a short answer's key, e.g. "4096 KB · ±0,5 · chấp nhận quy đổi". */
 export function describeShortAnswer(q) {
     const answers = filledAnswers(q);
@@ -102,8 +137,8 @@ export function formatShortAnswer(answer, units = []) {
 
 /** Return a copy of `q` converted to `newType`, keeping options and fixing correctAnswer's shape. */
 export function convertQuestionType(q, newType) {
+    if (q.type === newType) return q;
     if (newType === 'short_answer') {
-        if (q.type === 'short_answer') return q;
         // Start from the old correct option's text so a converted multiple-choice question keeps its key.
         const keyText = typeof q.correctAnswer === 'number' && q.options?.[q.correctAnswer] ? htmlToPlain(q.options[q.correctAnswer]).trim() : '';
         const rest = { ...q };
@@ -113,6 +148,20 @@ export function convertQuestionType(q, newType) {
     }
     const base = { ...q };
     for (const field of SHORT_ANSWER_FIELDS) delete base[field];
+    if (newType === 'dropdown') {
+        // Statements become rows to judge Đúng/Sai; a choice question becomes one row picking from its options.
+        if (q.type === 'multi_true_false' && q.options?.length) {
+            return { ...base, type: 'dropdown', options: q.options, choices: ['Đúng', 'Sai'], scoringMethod: 'partial',
+                correctAnswer: q.options.map((_, i) => (typeof q.correctAnswer?.[i] === 'boolean' ? (q.correctAnswer[i] ? 0 : 1) : null)) };
+        }
+        if (hasOptionList(q.type) && q.options?.length >= 2) {
+            return { ...base, type: 'dropdown', options: [''], choices: q.options.map((o) => htmlToPlain(o).trim()), scoringMethod: 'partial',
+                correctAnswer: [typeof q.correctAnswer === 'number' ? q.correctAnswer : Array.isArray(q.correctAnswer) && typeof q.correctAnswer[0] === 'number' ? q.correctAnswer[0] : null] };
+        }
+        return { ...base, ...EMPTY_DROPDOWN, type: 'dropdown' };
+    }
+    // A dropdown's key points into its choices and its scoring modes are its own: neither carries over.
+    if (q.type === 'dropdown') { delete base.choices; delete base.scoringMethod; q = { ...q, correctAnswer: undefined }; }
     let correctAnswer;
     let options = q.options || [];
     if (newType === 'essay') {

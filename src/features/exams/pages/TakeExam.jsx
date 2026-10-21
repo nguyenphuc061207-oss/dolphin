@@ -29,7 +29,7 @@ import {
 
 import { storageOperation } from '@/shared/utils/runtimeSafety';
 import { validateQuestions } from '../utils/examSafety';
-import { TYPE_LABELS, isTypedType } from '../utils/questionEditing';
+import { TYPE_LABELS, hasOptionList } from '../utils/questionEditing';
 import { getExamInfo, startAttempt, saveAnswers, submitAttempt } from '../services/examApi';
 import { readExamProgress, removeExamProgress } from '../utils/examProgress';
 import { normalizeFlow, pageOf, pageStart, pageEnd, describeFlow } from '../utils/examFlow';
@@ -40,7 +40,7 @@ function isAnswered(answer, type) {
   if (type === 'essay') return typeof answer === 'string' && answer.trim() !== '';
   if (type === 'short_answer') return typeof answer?.value === 'string' && answer.value.trim() !== '';
   if (type === 'multiple') return Array.isArray(answer) && answer.length > 0;
-  if (type === 'multi_true_false') return Array.isArray(answer) && answer.some(v => v !== null && v !== undefined);
+  if (type === 'multi_true_false' || type === 'dropdown') return Array.isArray(answer) && answer.some(v => v !== null && v !== undefined);
   return answer !== undefined && answer !== null;
 }
 
@@ -80,6 +80,33 @@ function ShortAnswerInput({ id, question, answer, fontSize, onChange }) {
       {units.length > 0 && value.trim() && unit === null && (
         <p className="mt-2 text-xs font-semibold text-amber-600" role="status">Bạn chưa chọn đơn vị – câu trả lời sẽ bị tính sai nếu thiếu đơn vị.</p>
       )}
+    </div>
+  );
+}
+
+/** Dropdown question: each row's label with a select over the shared choices. */
+function DropdownRows({ qi, question, answer, fontSize, mathDict, onChange }) {
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-3 items-center max-w-2xl">
+      {question.options.map((row, ri) => {
+        const picked = Array.isArray(answer) && Number.isInteger(answer[ri]) ? answer[ri] : null;
+        return (
+          <div key={ri} className="contents">
+            <label htmlFor={`q${qi}-row${ri}`} className="exam-text text-gray-800 min-w-0" style={{ fontSize: `${fontSize}px` }}>
+              <RichTextRenderer content={row} mathDict={mathDict} />
+            </label>
+            <select
+              id={`q${qi}-row${ri}`}
+              value={picked ?? ''}
+              onChange={(e) => onChange(ri, e.target.value === '' ? null : Number(e.target.value))}
+              className={`w-36 sm:w-44 px-3 py-2.5 border rounded-xl outline-none focus:ring-2 focus:ring-indigo-400 bg-white text-sm transition-colors ${picked === null ? 'border-gray-200 text-gray-400' : 'border-indigo-300 text-gray-900 font-semibold'}`}
+            >
+              <option value="">Chọn…</option>
+              {question.choices.map((c, ci) => <option key={ci} value={ci}>{c}</option>)}
+            </select>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -347,12 +374,11 @@ export default function TakeExam() {
 
   const handleSelectAnswer = (qi, oi, type, val) => {
     // Wall-clock reads run only on input events, never during rendering.
-    // eslint-disable-next-line react-hooks/purity
     if (isSubmittingRef.current || submissionAttempted || timeLeft <= 0 || Date.now() + serverOffsetRef.current >= deadline || (monitored && (isInterrupted || security.blocked()))) return;
     setUserAnswers((p) => {
       if (type === 'multiple') {
         return { ...p, [qi]: toggleMultiple(p[qi], oi) };
-      } else if (type === 'multi_true_false') {
+      } else if (type === 'multi_true_false' || type === 'dropdown') {
         const arr = Array.isArray(p[qi]) ? [...p[qi]] : Array(exam.questions[qi].options.length).fill(null);
         arr[oi] = val;
         return { ...p, [qi]: arr };
@@ -815,6 +841,8 @@ export default function TakeExam() {
                       <p className="text-[11px] text-gray-400 mb-2 flex items-center gap-1">
                         <PenLine className="w-3 h-3" /> {question.answerKind === 'number' ? 'Nhập đáp án là một số (dùng dấu phẩy hoặc dấu chấm cho phần thập phân)' : 'Nhập đáp án ngắn gọn'}{question.units?.length ? ' và chọn đơn vị' : ''}
                       </p>
+                    ) : qType === 'dropdown' ? (
+                      <p className="text-[11px] text-gray-400 mb-3">Chọn đáp án cho từng dòng trong danh sách bên cạnh</p>
                     ) : qType === 'multiple' ? (
                       <p className="text-[11px] text-gray-400 text-center mb-3">Chọn tất cả đáp án đúng (có thể chọn nhiều)</p>
                     ) : (
@@ -839,8 +867,12 @@ export default function TakeExam() {
                     <ShortAnswerInput id={`answer-${qi}`} question={question} answer={currentAnswer} fontSize={fontSize} onChange={(patch) => handleShortAnswerChange(qi, patch)} />
                   )}
 
+                  {qType === 'dropdown' && (
+                    <DropdownRows qi={qi} question={question} answer={currentAnswer} fontSize={fontSize} mathDict={exam?.mathDictionary} onChange={(ri, ci) => handleSelectAnswer(qi, ri, 'dropdown', ci)} />
+                  )}
+
                   {/* ── SINGLE / TRUE-FALSE / MULTIPLE / MULTI-TRUE-FALSE ── */}
-                  {!isTypedType(qType) && (
+                  {hasOptionList(qType) && (
                     <div className={`grid gap-3 ${isShortOptions(question.options) ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"}`}>
                       {question.options.map((opt, oi) => {
                         if (opt === undefined) return null;
