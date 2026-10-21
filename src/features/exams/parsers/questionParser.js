@@ -828,7 +828,7 @@ export function parseQuestionsFromHtml(html) {
         lines.map((l) => l.plain),
         (i) => {
             const p = lines[i].plain;
-            return !!parseQuestionStart(p) || !!parseOptionLine(p) || parseAnswerLine(p) !== -1 || IS_ONLY_KEYS_REGEX.test(p) || FIELD_LINE.test(p.trim());
+            return /\[IMG:/.test(lines[i].html) || !!parseQuestionStart(p) || !!parseOptionLine(p) || parseAnswerLine(p) !== -1 || IS_ONLY_KEYS_REGEX.test(p) || FIELD_LINE.test(p.trim());
         },
         (i) => hasBlockCode(lines[i].html),
     );

@@ -181,6 +181,17 @@ export function tokenizeMath(text) {
   return tokens;
 }
 
+const EATEN_ESCAPES = { '\b': 'b', '\t': 't', '\v': 'v', '\f': 'f', '\r': 'r' };
+
+/**
+ * LaTeX that went through a JSON/JS string unescaped loses the backslash of \times, \rightarrow,
+ * \frac, \beta, \vec: "$\rightarrow$" arrives as "$<CR>ightarrow$". Inside math a control
+ * character directly before a letter is never intended, so put the command back.
+ */
+export function repairEatenEscapes(math) {
+  return math.replace(/\\?([\b\t\v\f\r])(?=[A-Za-z])/g, (m, ch) => `\\${EATEN_ESCAPES[ch]}`);
+}
+
 /**
  * Clean up weird symbols produced by Mammoth/Word conversion
  */
@@ -192,7 +203,7 @@ export function normalizeWordMangledMath(text) {
 
   // Only touch text that is already inside $...$ – plain prose such as "(km/h)",
   // "@123" or "37°C" must stay exactly as the teacher typed it.
-  const cleanMath = (m) => m
+  const cleanMath = (m) => repairEatenEscapes(m)
     .replace(/°C/g, '^{\\circ}C')
     .replace(/°/g, '^{\\circ}')
     .replace(/log_(\d+)/gi, '\\log_{$1}')

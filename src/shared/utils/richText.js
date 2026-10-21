@@ -113,7 +113,7 @@ export function mergeCodeBlocks(html) {
 export function looksLikeCodeFragment(line) {
     const t = String(line ?? '').replace(/\u00A0/g, ' ').trim();
     return t.length > 0 && t.length <= 120 && /^[\x20-\x7E\t]+$/.test(t) && /[()[\]{}=;]/.test(t)
-        && !/[.?!]$/.test(t) && !/\$[^$]+\$/.test(t)
+        && !/[.?!]$/.test(t) && !/\$[^$]+\$/.test(t) && !/\[IMG:/.test(t)
         && !/[A-Za-z]{2,}\s+[A-Za-z]{2,}\s+[A-Za-z]{2,}\s+[A-Za-z]{2,}/.test(t); // 4+ words = a sentence
 }
 

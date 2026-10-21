@@ -122,3 +122,13 @@ test('a Word file with MathType (WMF) formulas is flagged instead of showing bro
   assert.match(html, /\[IMG: data:image\/x-wmf;base64,/);
   assert.match(html, dx.UNDISPLAYABLE_IMAGE);
 });
+
+test('LaTeX whose backslash escapes were eaten by a JSON/JS string still renders', () => {
+  for (const [broken, latex] of [['$\rightarrow$', '\\rightarrow'], ['$4 \times 3$', '4 \\times 3'], ['$\frac{1}{2}$', '\\frac{1}{2}'], ['$\beta + \vec{v}$', '\\beta + \\vec{v}'], ['$\\\times$', '\\times']]) {
+    const [token] = mu.tokenizeMath(mu.normalizeWordMangledMath(broken));
+    assert.equal(token.content, latex);
+    assert.doesNotThrow(() => katex.renderToString(token.content));
+  }
+  // Prose outside math keeps its tabs and line breaks.
+  assert.equal(mu.normalizeWordMangledMath('a\tb\r\nc'), 'a\tb\r\nc');
+});

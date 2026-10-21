@@ -51,6 +51,8 @@ export function scoreCodeLine(raw) {
     if (!trimmed) return { score: 0, neutral: false };
     if (/^[{}()[\];,]+$/.test(trimmed) || /^end[;.]?$/i.test(trimmed) || trimmed === '?>') return { score: 1, neutral: true };
     if (isCommentOnly(trimmed)) return { score: 0, neutral: true };
+    // An embedded picture: base64 is full of + / = and would otherwise read as operators.
+    if (/\[IMG:/.test(trimmed)) return { score: 0, neutral: false };
 
     const code = stripLiteralsAndComments(trimmed);
     if (VIETNAMESE.test(code) || /\$[^$]+\$/.test(code)) return { score: 0, neutral: false };

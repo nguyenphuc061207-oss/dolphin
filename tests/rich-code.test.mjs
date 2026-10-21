@@ -135,3 +135,9 @@ test('file import recognizes statements that only exist in code, and leaves math
   assert.deepEqual(detectCodeLines(['<?php', '$a = 5;', 'echo $a * 2;', '?>']), [true, true, true, true]);
   assert.deepEqual(detectCodeLines(['Đoạn Pascal:', '{ Tính tổng }', 'readln(a, b);', 'writeln(a + b);']), [false, true, true, true]);
 });
+
+test('a pasted [IMG: data:…] line is a picture, not code', () => {
+  const img = '[IMG: data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB+M9Qz0AEYBxVSF+FjP8ZGBj/M5BQ==]';
+  assert.equal(looksLikeCode(img), false);
+  assert.deepEqual(detectCodeLines(['x = 1;', img, 'y = 2;']), [true, false, true]);
+});

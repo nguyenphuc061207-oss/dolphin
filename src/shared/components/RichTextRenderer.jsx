@@ -62,9 +62,14 @@ function domToReact(node, mathDict, inCode, key) {
   if (tag === 'br') return <br key={key} />;
   const isBlockCode = (tag === 'code' && node.getAttribute('class') === 'rt-block') || tag === 'pre';
   if (isBlockCode) {
+    // Older imports boxed a picture line as code; a block holding only pictures is a picture.
+    const listing = codeText(node);
+    if (/^\s*(?:\[IMG:\s*data:[^\]]+\]\s*)+$/.test(listing)) {
+      return <React.Fragment key={key}>{renderPlain(listing.trim(), mathDict, `${key}-`)}</React.Fragment>;
+    }
     // Tokenize the whole listing, including Word runs, so strings/comments spanning
     // multiple text nodes retain their context. Code never enters the math renderer.
-    return React.createElement(TAG_COMPONENTS[tag], { key, className: node.getAttribute('class') || undefined }, renderCode(codeText(node), key));
+    return React.createElement(TAG_COMPONENTS[tag], { key, className: node.getAttribute('class') || undefined }, renderCode(listing, key));
   }
   const nextInCode = isBlockCode ? 'block' : (inCode || tag === 'code');
   const children = Array.from(node.childNodes).map((c, i) => domToReact(c, mathDict, nextInCode, `${key}.${i}`));
