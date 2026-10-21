@@ -61,6 +61,12 @@ const checks = async () => {
   expect(same(letters.choices, ['A', 'B', 'C']) && same(letters.correctAnswer, [1, null]), 'single-letter choices and unset row');
   expect(getQuestionIssues(letters).some((m) => m.includes('dòng 2')), 'teacher is told which row lacks a key');
 
+  // Choices that hold an arrow themselves: the row ends at the arrow before a known choice.
+  const [widen] = parse(['Câu 9: Ghép lệnh mở rộng dấu [Loại: Chọn]', 'Lựa chọn: AL → AX | AX → DX:AX | AX → EAX', 'A. CBW → AL → AX', 'B. CWD → AX → DX:AX',
+    'Đáp án: A-AL → AX, B-AX → DX:AX']);
+  expect(same(widen.options, ['CBW', 'CWD']) && same(widen.choices, ['AL → AX', 'AX → DX:AX', 'AX → EAX']) && same(widen.correctAnswer, [0, 1]),
+    'arrow inside a choice is not the row separator');
+
   // Existing types are untouched by the new tags.
   const [multi, single] = parse(['Câu 7: Chọn các số chẵn [Loại: Chọn nhiều]', 'A. 2', 'B. 3', 'C. 4', 'Đáp án: A, C', 'Câu 8: 1 + 1 = ?', 'A. 2', 'B. 3', 'Đáp án: A']);
   expect(multi.type === 'multiple' && same(multi.correctAnswer, [0, 2]), 'Chọn nhiều still multiple choice');

@@ -522,8 +522,20 @@ export function parseQuestionsFromText(text) {
 
 const FIELD_LINE = /^(đáp\s*án(?:\s*đúng)?|answer|key|(?:các\s*|danh\s*sách\s*)?lựa\s*chọn|đơn\s*vị|sai\s*số|dung\s*sai)\s*[:：]\s*(.*)$/i;
 const CHOICES_LABEL = /^\s*(?:các\s*|danh\s*sách\s*)?lựa\s*chọn\s*[:：]/i;
-/** "DL=10 → 38h": the last arrow separates a dropdown row from its key. */
-const ROW_ARROW = /^([\s\S]*)(?:→|->|=>)\s*(.*?)$/;
+/** "DL=10 → 38h": an arrow separates a dropdown row from its key. */
+const ROW_ARROW = /\s*(?:→|->|=>)\s*/g;
+const LETTERED_KEY = /^[A-Za-z]\s*[-:.)→]\s*/;
+
+/**
+ * Where a row ends and its key starts. A key may itself hold arrows ("CBW → AL → AX" with the choice
+ * "AL → AX"), so the first arrow followed by a known choice or answer wins; otherwise the last arrow.
+ */
+function splitRowArrow(plain, known) {
+    const arrows = [...plain.matchAll(ROW_ARROW)];
+    if (!arrows.length) return null;
+    const at = arrows.find((m) => known.has(plain.slice(m.index + m[0].length).trim().toLowerCase())) || arrows[arrows.length - 1];
+    return { rowEnd: at.index, key: plain.slice(at.index + at[0].length).trim() };
+}
 
 /** Field line of a short-answer/dropdown question → { field, value }, or null. */
 function parseFieldLine(plain, kind) {
@@ -587,17 +599,18 @@ function shortAnswerFields({ answers = [], units = [], tolerance }) {
 function dropdownFields(rowsHtml, { choices = [], answer }) {
     const rows = [];
     const keys = [];
+    const items = answer ? splitList(answer, true) : [];
+    const lettered = items.length > 0 && items.every((it) => /^[A-Za-z]\s*[-:.)→]\s*\S/.test(it));
+    const known = new Set([...choices, ...items.map((it) => (lettered ? it.replace(LETTERED_KEY, '') : it))].map((k) => k.trim().toLowerCase()));
     for (const html of rowsHtml) {
         const plain = linePlain(html ?? '');
-        const m = plain.match(ROW_ARROW);
-        rows.push(m ? splitHtmlAt(html, m[1].trimEnd().length)[0] : html ?? '');
-        keys.push(m && m[2].trim() ? m[2].trim() : null);
+        const m = splitRowArrow(plain, known);
+        rows.push(m ? splitHtmlAt(html, m.rowEnd)[0] : html ?? '');
+        keys.push(m && m.key ? m.key : null);
     }
-    if (answer) {
-        const items = splitList(answer, true);
-        const lettered = items.length > 0 && items.every((it) => /^[A-Za-z]\s*[-:.)→]\s*\S/.test(it));
+    if (items.length) {
         items.forEach((it, i) => {
-            const [row, text] = lettered ? [letterToIndex(it[0]), it.replace(/^[A-Za-z]\s*[-:.)→]\s*/, '')] : [i, it];
+            const [row, text] = lettered ? [letterToIndex(it[0]), it.replace(LETTERED_KEY, '')] : [i, it];
             if (row >= 0 && row < keys.length && !keys[row]) keys[row] = text.trim();
         });
     }
