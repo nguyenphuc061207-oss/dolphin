@@ -1,4 +1,4 @@
-import { restoreProgress } from './examSafety.js';
+import { restoreProgress, PUBLIC_QUESTION_FIELDS } from './examSafety.js';
 
 export const progressKey = (examId, userId) => `exam_progress_${examId}_${userId}`;
 
@@ -8,7 +8,7 @@ export function readExamProgress(examId, userId, durationSeconds, storage = glob
   const saved = restoreProgress(raw, durationSeconds);
   // Old browser backups may contain answer keys. They are never trusted or reused.
   saved.examSnapshot = saved.examSnapshot.map(q => Object.fromEntries(
-    ['type', 'content', 'options', 'scoringMethod'].filter(k => q[k] !== undefined).map(k => [k, q[k]])
+    PUBLIC_QUESTION_FIELDS.filter(k => q[k] !== undefined).map(k => [k, q[k]])
   ));
   const publicText = JSON.stringify(saved.examSnapshot);
   saved.mathDictionary = Object.fromEntries(Object.entries(saved.mathDictionary || {}).filter(([key]) => publicText.includes(key)));

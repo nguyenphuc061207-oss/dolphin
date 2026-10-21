@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { publicQuestions, publicDictionary, attemptQuestions, gradeExam, passwordHash, checkPassword, reviewAllowed, authorizeStart, validateAnswers, sanitizeViolations, mergeViolations } from '../policy.js';
-import { gradeExam as previousGrade } from '../../src/features/exams/utils/examSafety.js';
+import { gradeExam as clientGrade } from '../../src/features/exams/utils/examSafety.js';
 
 const questions = [
   { type: 'single', content: '[!m:q]', options: ['A', 'B'], correctAnswer: 1, explanation: 'SECRET', answer: 'SECRET', hidden: { secret: 'SECRET' } },
@@ -15,8 +15,14 @@ test('allowlisted responses omit all keys, explanations and unrelated formula en
   assert.deepEqual(publicDictionary(questions, { q: 'x^2', answerFormula: 'TOP SECRET' }), { q: 'x^2' });
 });
 test('server scoring preserves current rules for every question type and partial scores', () => {
-  for (const answers of [{}, { 0: 1, 1: [2, 0], 2: [true, false, true, false], 3: 'Essay' }, { 0: 0, 1: [0], 2: [true, false, null, null] }]) {
-    assert.deepEqual(gradeExam(questions, answers), previousGrade(questions, answers));
+  const cases = [
+    [{}, { score: 0, correct: 0, gradable: 3 }],
+    [{ 0: 1, 1: [2, 0], 2: [true, false, true, false], 3: 'Essay' }, { score: 10, correct: 3, gradable: 3 }],
+    [{ 0: 0, 1: [0], 2: [true, false, null, null] }, { score: 0.83, correct: 0.25, gradable: 3 }],
+  ];
+  for (const [answers, expected] of cases) {
+    assert.deepEqual(gradeExam(questions, answers), expected);
+    assert.deepEqual(clientGrade(questions, answers), expected);
   }
 });
 test('option shuffling retains correct mapping for multiple choice and statement truth values', () => {

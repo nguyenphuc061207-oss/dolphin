@@ -16,6 +16,18 @@ test('reopening preserves answers, order, position, attempt and violations witho
   assert.equal(saved.timeLeft, 0);
 });
 
+test('saved dropdown and short-answer questions keep what students see and drop any answer key', () => {
+  const snapshot = [
+    { type: 'dropdown', content: 'Q', options: ['DL=10'], choices: ['38h', '41h'], correctAnswer: [0] },
+    { type: 'short_answer', content: 'Q', answerKind: 'number', units: ['KB', 'MB'], acceptedAnswers: ['4096'], correctUnit: 0, unitFactors: [1, 1024] },
+  ];
+  const store = storage([[progressKey('exam', 'student'), JSON.stringify({ ...draft, examSnapshot: snapshot })]]);
+  assert.deepEqual(readExamProgress('exam', 'student', 300, store).examSnapshot, [
+    { type: 'dropdown', content: 'Q', options: ['DL=10'], choices: ['38h', '41h'] },
+    { type: 'short_answer', content: 'Q', answerKind: 'number', units: ['KB', 'MB'] },
+  ]);
+});
+
 test('dashboard isolates accounts, includes older drafts, and ignores damaged entries', () => {
   const store = storage([
     [progressKey('a', 'alice'), JSON.stringify(draft)],

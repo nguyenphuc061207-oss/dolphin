@@ -1,4 +1,5 @@
 import { randomInt, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { PUBLIC_QUESTION_FIELDS, questionProblem, answerShapeOk, scoreAnswers, shuffleQuestionOptions } from './questionTypes.js';
 
 export class ExamError extends Error {
   constructor(code, message) { super(message); this.code = code; }
@@ -11,7 +12,7 @@ export const id = value => {
 export const millis = value => typeof value?.toMillis === 'function' ? value.toMillis()
   : typeof value === 'number' ? value : value ? new Date(value).getTime() : 0;
 export const pick = (source, keys) => Object.fromEntries(keys.filter(k => source[k] !== undefined).map(k => [k, source[k]]));
-export const publicQuestions = questions => questions.map(q => pick(q, ['type', 'content', 'options', 'scoringMethod']));
+export const publicQuestions = questions => questions.map(q => pick(q, PUBLIC_QUESTION_FIELDS));
 export const publicDictionary = (questions, dictionary = {}) => {
   const text = JSON.stringify(publicQuestions(questions));
   return Object.fromEntries(Object.entries(dictionary).filter(([key]) => text.includes(key)));
@@ -57,18 +58,11 @@ export function checkPassword(password, stored) {
   return candidate.length === expected.length && timingSafeEqual(candidate, expected);
 }
 export function validateQuestions(questions) {
-  const types = ['single', 'multiple', 'true_false', 'multi_true_false', 'essay'];
   if (!Array.isArray(questions) || !questions.length || questions.length > 500) fail('invalid-argument', 'Danh sách câu hỏi không hợp lệ.');
   questions.forEach(q => {
-    const type = q?.type || 'single';
-    if (typeof q?.content !== 'string' || !types.includes(type)) fail('invalid-argument', 'Câu hỏi không hợp lệ.');
-    if (type === 'essay') return;
-    const valid = n => n !== '' && n != null && Number.isInteger(Number(n)) && Number(n) >= 0 && Number(n) < q.options?.length;
-    if (!Array.isArray(q.options) || !q.options.length || q.options.some(o => typeof o !== 'string') ||
-      !(type === 'multi_true_false' ? Array.isArray(q.correctAnswer) && q.correctAnswer.length === q.options.length && q.correctAnswer.every(v => typeof v === 'boolean')
-        : type === 'multiple' ? Array.isArray(q.correctAnswer) && q.correctAnswer.length > 0 && q.correctAnswer.every(valid) : valid(q.correctAnswer))) {
-      fail('invalid-argument', 'Phương án hoặc đáp án không hợp lệ.');
-    }
+    const problem = questionProblem(q);
+    if (problem === 'type') fail('invalid-argument', 'Câu hỏi không hợp lệ.');
+    if (problem) fail('invalid-argument', 'Phương án hoặc đáp án không hợp lệ.');
   });
 }
 function shuffle(values, random = randomInt) {
@@ -79,45 +73,20 @@ function shuffle(values, random = randomInt) {
 export function attemptQuestions(exam, questions, random = randomInt) {
   let result = structuredClone(questions);
   if (exam.shuffleQuestions) result = shuffle(result, random);
-  if (exam.shuffleOptions) result = result.map(q => {
-    if (!q.options?.length) return q;
-    const order = shuffle(q.options.map((_, i) => i), random);
-    const correctAnswer = q.type === 'multi_true_false' ? order.map(i => q.correctAnswer[i])
-      : q.type === 'multiple' ? q.correctAnswer.map(i => order.indexOf(Number(i))) : order.indexOf(Number(q.correctAnswer));
-    return { ...q, options: order.map(i => q.options[i]), correctAnswer };
-  });
+  if (exam.shuffleOptions) result = result.map(q => shuffleQuestionOptions(q, values => shuffle(values, random)));
   return result;
 }
 export function validateAnswers(questions, answers) {
   if (!answers || typeof answers !== 'object' || Array.isArray(answers) || JSON.stringify(answers).length > 400000) fail('invalid-argument', 'Câu trả lời không hợp lệ.');
   for (const [key, answer] of Object.entries(answers)) {
     if (!/^\d+$/.test(key) || Number(key) >= questions.length) fail('invalid-argument', 'Mã câu hỏi không hợp lệ.');
-    const q = questions[Number(key)], type = q.type || 'single';
-    if (answer === null) continue;
-    const index = v => Number.isInteger(v) && v >= 0 && v < q.options.length;
-    if (type === 'essay' ? typeof answer !== 'string' || answer.length > 20000
-      : type === 'multiple' ? !Array.isArray(answer) || answer.length > q.options.length || !answer.every(index)
-      : type === 'multi_true_false' ? !Array.isArray(answer) || answer.length > q.options.length || !answer.every(v => v === null || typeof v === 'boolean')
-      : !index(answer)) fail('invalid-argument', 'Kiểu câu trả lời không hợp lệ.');
+    if (!answerShapeOk(questions[Number(key)], answer)) fail('invalid-argument', 'Kiểu câu trả lời không hợp lệ.');
   }
   return answers;
 }
 export function gradeExam(questions, answers = {}) {
   validateQuestions(questions);
-  let correct = 0, gradable = 0;
-  questions.forEach((q, i) => {
-    const type = q.type || 'single', ans = answers[i];
-    if (type === 'essay') return;
-    gradable++;
-    if (type === 'multiple') {
-      const canonical = a => [...new Set(a.map(Number))].sort((a, b) => a - b).join(',');
-      if (Array.isArray(ans) && canonical(q.correctAnswer) === canonical(ans)) correct++;
-    } else if (type === 'multi_true_false') {
-      const ratio = q.correctAnswer.filter((v, j) => Array.isArray(ans) && ans[j] === v).length / q.options.length;
-      correct += q.scoringMethod === 'gdpt_2018' ? (ratio === 1 ? 1 : ratio >= .75 ? .5 : ratio >= .5 ? .25 : ratio >= .25 ? .1 : 0) : ratio;
-    } else if (ans != null && ans !== '' && Number(ans) === Number(q.correctAnswer)) correct++;
-  });
-  return { score: gradable ? Number((correct / gradable * 10).toFixed(2)) : 0, correct, gradable };
+  return scoreAnswers(questions, answers);
 }
 export function reviewAllowed(exam, uid, now) {
   if (exam.teacherId === uid) return true;
