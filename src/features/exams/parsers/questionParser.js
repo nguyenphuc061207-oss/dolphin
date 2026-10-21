@@ -7,6 +7,8 @@
  *   "multiple"   – Multi-select (Đáp án: A, B, C  or  [Loại: Chọn nhiều])
  *   "true_false" – Only Đúng/Sai options  or  [Loại: Đúng/Sai]
  *   "essay"      – No options found, or [Loại: Tự luận]
+ *   "short_answer" – [Loại: Điền] / [Loại: Trả lời ngắn], key in "Đáp án: 4096 KB" (see shortAnswerFields)
+ *   "dropdown"   – [Loại: Chọn], rows "A. DL=10 → 38h", optional "Lựa chọn: 38h | 41h" (see dropdownFields)
  *
  * Detects correct answers via 3 methods:
  *   Format A: Bold/Underline formatting on options (<strong>, <u>, <b>)
@@ -32,6 +34,8 @@ import { convertAsciiMathToLatex } from '@/shared/math/asciiMathParser';
 import { extractMathMLFromText } from '@/shared/math/mathmlParser';
 import { escapeHtml, sanitizeRichHtml, normalizeExplanation, decodeTextEntities } from '@/shared/utils/richText';
 import { detectCodeLines, looksLikeCode } from './codeDetector';
+import { normalizeQuestion } from '../utils/questionEditing';
+import { parseNumber } from '../../../../functions/questionTypes.js';
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -48,7 +52,7 @@ function letterToIndex(letter) {
 // Type-tag inline detection
 // ─────────────────────────────────────────────
 
-const TYPE_TAG_REGEX = /\[Loại\s*:?\s*(Chọn\s*nhiều|Đúng\s*\/\s*Sai|Tự\s*luận)\]/i;
+const TYPE_TAG_REGEX = /\[Loại\s*:?\s*(Chọn\s*nhiều|Đúng\s*\/\s*Sai|Tự\s*luận|Điền(?:\s*đáp\s*án)?|Trả\s*lời\s*ngắn|Chọn(?:\s*từ\s*danh\s*sách)?)\]/i;
 
 /**
  * Extract explicit [Loại: ...] tag → type string, or null.
@@ -59,9 +63,11 @@ function extractTypeTag(text) {
     const m = text.match(TYPE_TAG_REGEX);
     if (!m) return null;
     const v = m[1].trim();
-    if (/ch[oọ]n\s*nhi[eê]u/i.test(v)) return 'multiple';
+    if (/ch[oọ]n\s*nhi[eêềế]u/i.test(v)) return 'multiple';
     if (/[dđ][uú]ng\s*\/\s*sai/i.test(v)) return 'multi_true_false';
     if (/t[ựừu]\s*lu[aậ]n/i.test(v)) return 'essay';
+    if (/^(?:đi[eề]n|tr[aả]\s*l[oờ]i)/i.test(v)) return 'short_answer';
+    if (/^ch[oọ]n/i.test(v)) return 'dropdown';
     return null;
 }
 
@@ -504,6 +510,109 @@ export function parseQuestionsFromText(text) {
 }
 
 // ─────────────────────────────────────────────
+// Short-answer and dropdown fields
+// ─────────────────────────────────────────────
+//
+// Inside a [Loại: Điền] or [Loại: Chọn] question these labelled lines carry the key:
+//   Đáp án: 4096 KB          (short answer; several accepted answers separated by | or ;)
+//   Đơn vị: KB, MB, GB       (short answer: the units students pick from)
+//   Sai số: 0,5   /  1%      (short answer: allowed difference)
+//   Lựa chọn: 38h | 41h      (dropdown: the shared list, extra wrong choices included)
+//   Đáp án: 38h | 41h        (dropdown: one key per row, in order, or "A: 38h, B: 41h")
+
+const FIELD_LINE = /^(đáp\s*án(?:\s*đúng)?|answer|key|(?:các\s*|danh\s*sách\s*)?lựa\s*chọn|đơn\s*vị|sai\s*số|dung\s*sai)\s*[:：]\s*(.*)$/i;
+const CHOICES_LABEL = /^\s*(?:các\s*|danh\s*sách\s*)?lựa\s*chọn\s*[:：]/i;
+/** "DL=10 → 38h": the last arrow separates a dropdown row from its key. */
+const ROW_ARROW = /^([\s\S]*)(?:→|->|=>)\s*(.*?)$/;
+
+/** Field line of a short-answer/dropdown question → { field, value }, or null. */
+function parseFieldLine(plain, kind) {
+    const m = plain.trim().match(FIELD_LINE);
+    if (!m) return null;
+    const label = m[1].toLowerCase();
+    const field = /lựa\s*chọn/.test(label) ? 'choices' : /đơn\s*vị/.test(label) ? 'units' : /sai/.test(label) ? 'tolerance' : 'answer';
+    if (kind === 'dropdown' ? !['choices', 'answer'].includes(field) : field === 'choices') return null;
+    return { field, value: m[2].trim() };
+}
+
+/**
+ * "a | b | c", "a; b" or (when `commas`) "a, b" → trimmed items. Commas are opt-in because
+ * "3,14" is a Vietnamese decimal. One trailing full stop is dropped ("Hà Nội." → "Hà Nội").
+ */
+function splitList(text, commas) {
+    const t = String(text).trim().replace(/(?<!\.)\.$/, '');
+    const sep = t.includes('|') ? '|' : t.includes(';') ? ';' : commas ? ',' : null;
+    return (sep ? t.split(sep) : [t]).map((s) => s.trim()).filter(Boolean);
+}
+
+/** "4096 KB" → { value: '4096', unit: 'KB' }; "3,14" → { value: '3,14' }; text that is not a number → null. */
+function splitNumberUnit(text) {
+    const m = text.match(/^(.*?\d)\s*([^\d\s.,+-]\S*)?$/);
+    return m && Number.isFinite(parseNumber(m[1])) ? { value: m[1].trim(), unit: m[2] } : null;
+}
+
+/**
+ * Short-answer key from the field lines. Answers that are all numbers become a numeric key; a unit written
+ * after the first answer is the right unit, chosen from "Đơn vị:" or, without that line, the only unit offered.
+ */
+function shortAnswerFields({ answers = [], units = [], tolerance }) {
+    const numbers = answers.map(splitNumberUnit);
+    if (!answers.length || numbers.some((n) => !n)) return { answerKind: 'text', acceptedAnswers: answers.length ? answers : [''] };
+    const unit = numbers.find((n) => n.unit)?.unit;
+    const same = (a, b) => a?.toLowerCase() === b?.toLowerCase();
+    const list = [...units];
+    if (unit && !list.some((u) => same(u, unit))) list.push(unit);
+    const out = {
+        answerKind: 'number',
+        // An answer in another unit ("4 MB" next to "4096 KB") needs a conversion the teacher sets up in the editor.
+        acceptedAnswers: numbers.filter((n) => !n.unit || same(n.unit, unit)).map((n) => n.value),
+    };
+    if (list.length) {
+        out.units = list;
+        const correct = list.findIndex((u) => same(u, unit));
+        if (correct >= 0) out.correctUnit = correct;
+    }
+    const tol = String(tolerance ?? '').match(/^±?\s*(.*?\d)\s*(%)?$/);
+    if (tol && Number.isFinite(parseNumber(tol[1]))) {
+        out.tolerance = Math.abs(parseNumber(tol[1]));
+        if (tol[2]) out.toleranceMode = 'percent';
+    }
+    return out;
+}
+
+/**
+ * Dropdown rows, choices and key. Each row's key is the text after its arrow, else the matching item of the
+ * "Đáp án:" line. Keys missing from "Lựa chọn:" are added to the list; rows without a key stay unset.
+ */
+function dropdownFields(rowsHtml, { choices = [], answer }) {
+    const rows = [];
+    const keys = [];
+    for (const html of rowsHtml) {
+        const plain = linePlain(html ?? '');
+        const m = plain.match(ROW_ARROW);
+        rows.push(m ? splitHtmlAt(html, m[1].trimEnd().length)[0] : html ?? '');
+        keys.push(m && m[2].trim() ? m[2].trim() : null);
+    }
+    if (answer) {
+        const items = splitList(answer, true);
+        const lettered = items.length > 0 && items.every((it) => /^[A-Za-z]\s*[-:.)→]\s*\S/.test(it));
+        items.forEach((it, i) => {
+            const [row, text] = lettered ? [letterToIndex(it[0]), it.replace(/^[A-Za-z]\s*[-:.)→]\s*/, '')] : [i, it];
+            if (row >= 0 && row < keys.length && !keys[row]) keys[row] = text.trim();
+        });
+    }
+    const list = [...choices];
+    const indexOf = (key) => {
+        let i = list.indexOf(key);
+        if (i < 0) i = list.findIndex((c) => c.toLowerCase() === key.toLowerCase());
+        if (i < 0) { list.push(key); i = list.length - 1; }
+        return i;
+    };
+    const correctAnswer = keys.map((k) => (k ? indexOf(k) : null));
+    return { rows, choices: list.length ? list : ['', ''], correctAnswer, scoringMethod: 'partial' };
+}
+
+// ─────────────────────────────────────────────
 // HTML parser (rich HTML from docxExtractor / PDF)
 // ─────────────────────────────────────────────
 //
@@ -661,7 +770,8 @@ export function parseQuestionsFromHtml(html) {
     //    "Đáp án: A. Giải thích: …" into answer line + explanation line.
     const lines = [];
     const pushLine = (lineHtml, plain) => {
-        const m = plain.match(EMBEDDED_ANSWER_REGEX);
+        // "Lựa chọn: A, B, C" is a dropdown's choice list, not an answer introduced by "chọn".
+        const m = !CHOICES_LABEL.test(plain) && plain.match(EMBEDDED_ANSWER_REGEX);
         if (m) {
             const cleanAfter = m[3].trim().replace(/[.\s]+$/, '');
             const isStandardAns = /^[A-Za-z](?:\s*[,/]\s*[A-Za-z])*(?:\s*(?:đúng|sai))?\s*$/i.test(cleanAfter);
@@ -718,7 +828,7 @@ export function parseQuestionsFromHtml(html) {
         lines.map((l) => l.plain),
         (i) => {
             const p = lines[i].plain;
-            return !!parseQuestionStart(p) || !!parseOptionLine(p) || parseAnswerLine(p) !== -1 || IS_ONLY_KEYS_REGEX.test(p);
+            return !!parseQuestionStart(p) || !!parseOptionLine(p) || parseAnswerLine(p) !== -1 || IS_ONLY_KEYS_REGEX.test(p) || FIELD_LINE.test(p.trim());
         },
         (i) => hasBlockCode(lines[i].html),
     );
@@ -770,6 +880,7 @@ export function parseQuestionsFromHtml(html) {
                 correctAnswer: -1,
                 _marked: [],
                 explanation: '',
+                fields: { answers: [], units: [], tolerance: null, choices: [], answer: null },
             };
             lastOptionIndex = -1;
             afterAnswer = false;
@@ -794,6 +905,22 @@ export function parseQuestionsFromHtml(html) {
             continue;
         }
 
+        // Key lines of a short-answer / dropdown question (the type comes from its [Loại: …] tag).
+        const kind = inExplanation ? null : extractTypeTag(linePlain(cur.content));
+        const fieldLine = (kind === 'short_answer' || kind === 'dropdown') && parseFieldLine(plain, kind);
+        if (fieldLine) {
+            const f = cur.fields;
+            if (fieldLine.field === 'answer') {
+                if (kind === 'dropdown') f.answer = fieldLine.value;
+                else f.answers.push(...splitList(fieldLine.value, false));
+                afterAnswer = true;
+            } else if (fieldLine.field === 'choices') f.choices.push(...splitList(fieldLine.value, true));
+            else if (fieldLine.field === 'units') f.units.push(...splitList(fieldLine.value, true));
+            else f.tolerance = fieldLine.value;
+            lastOptionIndex = -1;
+            continue;
+        }
+
         const optLine = parseOptionLine(plain);
         if (optLine && inExplanation && cur.options[optLine.index] !== undefined) {
             // "A. sai vì …" inside a solution → explanation text, not a new option
@@ -805,7 +932,8 @@ export function parseQuestionsFromHtml(html) {
             const consumed = clean.length - optLine.text.length;
             let optHtml = cutMarker(line, consumed);
             // a one-line option that is clearly code (e.g. "A. x += 1;") → inline code
-            if (!/<code\b/.test(optHtml) && looksLikeCode(optLine.text)) optHtml = `<code>${optHtml}</code>`;
+            // Dropdown rows such as "DL=10 → 38h" are prose, not code.
+            if (kind !== 'dropdown' && !/<code\b/.test(optHtml) && looksLikeCode(optLine.text)) optHtml = `<code>${optHtml}</code>`;
             cur.options[optLine.index] = optHtml;
             if (isMarkedOption(line.html, lead, consumed)) cur._marked.push(optLine.index);
             lastOptionIndex = optLine.index;
@@ -827,7 +955,7 @@ export function parseQuestionsFromHtml(html) {
             cur.explanation += (cur.explanation ? '<br>' : '') + line.html;
         } else if (lastOptionIndex >= 0 && cur.options[lastOptionIndex] !== undefined) {
             cur.options[lastOptionIndex] += '<br>' + line.html;
-        } else if (cur.options.length === 0) {
+        } else if (cur.options.length === 0 && !(kind && afterAnswer)) {
             cur.content += '<br>' + line.html;
         } else if (afterAnswer) {
             cur.explanation += (cur.explanation ? '<br>' : '') + line.html;
@@ -889,7 +1017,14 @@ function finalizeRichBlock(block) {
         content,
         options: base.options.map((_, i) => toMath(block.options[i])),
     };
+    if (base.type === 'short_answer') {
+        Object.assign(out, { options: [], ...shortAnswerFields(block.fields || {}) });
+        delete out.correctAnswer;
+    } else if (base.type === 'dropdown') {
+        const { rows, ...rest } = dropdownFields(block.options.slice(0, base.options.length), block.fields || {});
+        Object.assign(out, rest, { options: rows.map(toMath) });
+    }
     const explanation = normalizeExplanation(toMath(block.explanation));
     if (explanation) out.explanation = explanation;
-    return out;
+    return normalizeQuestion(out);
 }

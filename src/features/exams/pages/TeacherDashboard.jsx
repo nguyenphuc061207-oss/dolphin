@@ -57,6 +57,38 @@ const loadPdfjs = async () => {
     return pdfjsLib;
 };
 
+const SHORT_ANSWER_SAMPLE = `Câu 1: Đĩa có 8 mặt, 512 rãnh/mặt, 64 sector/rãnh, sector 1 kB. Dung lượng đĩa? [Loại: Điền]
+Đơn vị: KB, MB, GB
+Đáp án: 4096 KB
+Sai số: 0`;
+const DROPDOWN_SAMPLE = `Câu 2: Cho biết giá trị DL sau mỗi lệnh [Loại: Chọn]
+Lựa chọn: 38h | 41h | 55h | 0FFh | 10h
+A. DL=10 → 38h
+B. DL=8 → 41h
+C. DL=55h → 55h
+D. DL=0FFh → 0FFh`;
+
+/** How to write short-answer and dropdown questions in pasted text or a document. */
+function ImportSyntaxHelp() {
+    return (
+        <details className="text-[11px] text-gray-500 bg-gray-50 border border-gray-100 rounded-xl px-3 py-2">
+            <summary className="cursor-pointer font-bold select-none">Cách viết câu Điền đáp án và Chọn từ danh sách</summary>
+            <div className="mt-2 grid gap-3 md:grid-cols-2">
+                <div>
+                    <p className="font-bold text-cyan-700 mb-1">[Loại: Điền] hoặc [Loại: Trả lời ngắn]</p>
+                    <pre className="whitespace-pre-wrap bg-white border border-gray-200 rounded-lg p-2 font-mono text-[11px] text-gray-700">{SHORT_ANSWER_SAMPLE}</pre>
+                    <p className="mt-1">Nhiều cách viết đúng: <b>Đáp án: Hà Nội | Ha Noi</b>. <b>Đơn vị</b> và <b>Sai số</b> (VD: 0,5 hoặc 1%) không bắt buộc.</p>
+                </div>
+                <div>
+                    <p className="font-bold text-indigo-700 mb-1">[Loại: Chọn]</p>
+                    <pre className="whitespace-pre-wrap bg-white border border-gray-200 rounded-lg p-2 font-mono text-[11px] text-gray-700">{DROPDOWN_SAMPLE}</pre>
+                    <p className="mt-1">Đáp án mỗi dòng viết sau dấu <b>→</b> (hoặc <b>-&gt;</b>), hoặc gom lại: <b>Đáp án: 38h | 41h | 55h | 0FFh</b>. <b>Lựa chọn</b> dùng để thêm phương án gây nhiễu.</p>
+                </div>
+            </div>
+        </details>
+    );
+}
+
 /** Each dropdown row with its right choice, for the teacher's preview and question list. */
 function DropdownKeyList({ question, mathDict }) {
     const key = dropdownKey(question);
@@ -1150,8 +1182,9 @@ return (
                                         <textarea value={importText} onChange={(e) => setImportText(e.target.value)} rows={8} className="w-full p-4 bg-purple-50/30 border border-purple-100 rounded-xl outline-none font-mono text-sm resize-none focus:ring-2 focus:ring-purple-400 focus:border-transparent transition-shadow" placeholder={`Câu 1: Thủ đô của Việt Nam là gì?\nA. Hà Nội\nB. Hồ Chí Minh\nC. Đà Nẵng\nD. Huế\nĐáp án: A\nGiải thích: Hà Nội là thủ đô của Việt Nam.\n\nCâu 2: ...`} />
                                         <div className="flex items-start gap-2 text-[11px] text-gray-400">
                                             <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                                            <span>Hỗ trợ: <b>Đáp án: A</b> (1 đáp), <b>Đáp án: A, B</b> (nhiều đáp), <b>Giải thích:</b> (lời giải), <b>[Loại: Tự luận]</b>, <b>[Loại: Đúng/Sai]</b>, <b>[Loại: Chọn nhiều]</b></span>
+                                            <span>Hỗ trợ: <b>Đáp án: A</b> (1 đáp), <b>Đáp án: A, B</b> (nhiều đáp), <b>Giải thích:</b> (lời giải), <b>[Loại: Tự luận]</b>, <b>[Loại: Đúng/Sai]</b>, <b>[Loại: Chọn nhiều]</b>, <b>[Loại: Điền]</b>, <b>[Loại: Chọn]</b></span>
                                         </div>
+                                        <ImportSyntaxHelp />
                                         <button onClick={handleProcessImportText} className="w-full py-4 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 transition-all flex items-center justify-center gap-2 shadow-md shadow-purple-200">
                                             <Zap className="w-5 h-5" /> Nhận diện câu hỏi
                                         </button>
@@ -1226,6 +1259,7 @@ return (
                                             <Zap className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-400" />
                                             <span>Nhận diện tự động: <b>đáp án in đậm/gạch chân</b> trong Word, <b>Đáp án: A</b> sau mỗi câu, hoặc <b>bảng đáp án</b> cuối tài liệu.</span>
                                         </div>
+                                        <ImportSyntaxHelp />
                                     </div>
                                 )}
 
